@@ -38,10 +38,15 @@ EF.5001 read) requires a PACE channel. The CAN is printed on the card.
 Match against the contactless historical bytes / ATS. The library currently
 recognises two LV variants:
 
-| Variant  | Bytes                                 |
-| -------- | ------------------------------------- |
-| Newer LV | `00 12 42 8F 53 65 49 44 0F 90 00`    |
-| Older LV | `00 12 42 8F 54 65 49 44 32 0F 90 00` |
+| Variant                    | Bytes                                 | Cert-read note                                    |
+| -------------------------- | ------------------------------------- | ------------------------------------------------- |
+| `SeID`-marked (older card)  | `00 12 42 8F 53 65 49 44 0F 90 00`    | FCI declares size 1 — needs Form B, see §6        |
+| `TeID2`-marked (newer card) | `00 12 42 8F 54 65 49 44 32 0F 90 00` | FCI declares real sizes — Form A works            |
+
+The trailing ASCII marking (`SeID` = `53 65 49 44`, `TeID2` = `54 65 49 44 32`)
+is a product marking, **not** a generation ordering: on the LV test cards the
+`TeID2`-marked card is the newer one. Treat both as the same card type and
+branch on observed behaviour, never on the marking.
 
 The leading `00 12 42 8F` is the manufacturer signature unique to LV.
 Match the full byte string. (Estonian IDEMIA cards use `00 12 23 3F`
@@ -620,6 +625,25 @@ explicit `Le`.
 > for small files but silently truncates larger ones). Verbose
 > logging of the FCI hex is recommended the first time you port to
 > a new card variant.
+
+> **Do not trust the declared size blindly.** Older LV cards answer
+> `P2 = 04` with a well-formed FCP that declares a **1-byte** file:
+>
+> ```
+> 62 24 80 02 00 01 82 01 01 83 02 34 01 88 00 A1 12 … 8A 01 05
+>       ^^^^^^^^^^^ size = 1
+> ```
+>
+> File ID, transparent-EF descriptor and life-cycle byte are all correct,
+> and `READ BINARY` at offset 0 then returns a single `0x00` byte — so the
+> bogus size is not detectable from the SW either. Form B reads the same
+> file in full on those cards. The Android lib therefore only keeps the
+> Form A result when the declared size is plausible for a certificate
+> (≥ 256 bytes) **and** the bytes read begin a DER `SEQUENCE` whose length
+> is fully present; otherwise it re-SELECTs with `P2 = 0C` and falls back
+> to Form B. The verdict is remembered for the rest of the card session, so
+> only the first certificate read on an affected card pays for the probe.
+> Port that guard, not just the fast path.
 
 #### Form B — `6B 00`-terminated reads (canonical ISO 7816-4 / spec form)
 

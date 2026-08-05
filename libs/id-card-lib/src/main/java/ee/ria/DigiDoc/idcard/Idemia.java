@@ -23,6 +23,8 @@ import android.util.SparseArray;
 
 import com.google.common.primitives.Bytes;
 
+import org.bouncycastle.util.encoders.Hex;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +44,16 @@ abstract class Idemia implements Token {
     private static final String TAG = Idemia.class.getName();
 
     private static final int READ_BINARY_CHUNK_LE = 0xE5;
+
+    /**
+     * Smallest FCI-declared size we are willing to trust for a certificate
+     * file. Real EE/LV auth and sign certificates are ~1000-1600 bytes
+     * (ECC P-384 keys, full DER); anything below this means the card's
+     * {@code P2 = 0x04} FCI is not describing the certificate content —
+     * observed on older LV cards, which report {@code 80 02 00 01}. Treated
+     * as "no usable size" so we fall back to the canonical read.
+     */
+    private static final int MIN_PLAUSIBLE_CERT_SIZE = 0x100;
 
     private static final Map<CertificateType, byte[]> CERT_MAP = new HashMap<>();
     static {
@@ -64,6 +76,16 @@ abstract class Idemia implements Token {
     }
 
     protected final SmartCardReader reader;
+
+    /**
+     * Whether the FCI form of the certificate read is still worth attempting
+     * on this card. Cleared the first time the card's FCI turns out to be
+     * unusable, so the second certificate read goes straight to the canonical
+     * form instead of paying for the {@code P2 = 0x04} SELECT again. One
+     * token instance is created per card session, so this never outlives the
+     * card it was learned from.
+     */
+    private boolean fciCertReadSupported = true;
 
     Idemia(SmartCardReader reader) {
         this.reader = reader;
@@ -90,33 +112,117 @@ abstract class Idemia implements Token {
     /**
      * SELECT cert EF with P2 = 0x04 to request the FCP template, then either
      * <ul>
-     *   <li>FCI fast path: if the FCI declares a file size in tag
+     *   <li>FCI fast path: if the FCI declares a plausible file size in tag
      *       {@code 80}/{@code 81}, READ BINARY exactly that many bytes
      *       (no 6B 00 probe).</li>
-     *   <li>Canonical fallback: if the FCI lacks a parseable size tag,
-     *       READ BINARY chunked until the card returns SW {@code 6B 00}.</li>
+     *   <li>Canonical fallback: re-SELECT with {@code P2 = 0x0C} and READ
+     *       BINARY chunked until the card returns SW {@code 6B 00}.</li>
      * </ul>
-     * Both LV and EE IDEMIA cards return a standard ISO 7816-4 FCP template
-     * containing the size, so the fast path is the default. The fallback
-     * keeps us correct on card variants that respond to {@code P2 = 0x04}
-     * but omit the size tag — would otherwise silently truncate large files.
+     * The fast path is only taken when the FCI is trustworthy: a size tag is
+     * present, the size is not absurdly small for a certificate, and the
+     * bytes actually read start like a DER certificate. Older LV cards answer
+     * {@code P2 = 0x04} with {@code 62 24 80 02 00 01 …} — file ID and
+     * life-cycle correct, but size 1 and a first byte of {@code 0x00} — so
+     * trusting the FCI unconditionally yields a 1-byte "certificate" and an
+     * opaque {@code No certificate found} parse failure upstream. Once a card
+     * has answered with an unusable FCI, the fast path is not attempted again
+     * for the rest of the session, so only the first read pays for the probe.
+     * A card that rejects {@code P2 = 0x04} outright (any error SW) counts as
+     * an unusable FCI too — the probe is surface the pre-FCI implementation
+     * never touched, so it must not be able to fail a read that used to work.
+     * The fallback reproduces the pre-FCI APDU sequence exactly
+     * ({@code 00 A4 09 0C} + {@code 6B 00}-terminated read), which is known
+     * to work on all card variants.
      */
     @Override
     public byte[] certificate(CertificateType type) throws SmartCardReaderException {
+        byte[] path = CERT_MAP.get(type);
+        if (fciCertReadSupported) {
+            byte[] certificate;
+            try {
+                certificate = readCertificateViaFci(type, path);
+            } catch (ApduResponseException e) {
+                // Card-level "no" to the FCI form. Only ApduResponseException is
+                // caught: an SM or transport failure would fail on the canonical
+                // path too and must surface with its original cause.
+                LoggingUtil.Companion.debugLog(TAG, String.format(
+                        "certificate(%s): card rejected the FCI form (%s)"
+                                + " — falling back to 6B 00 loop for this session",
+                        type, e), null);
+                certificate = null;
+            }
+            if (certificate != null) {
+                return certificate;
+            }
+            fciCertReadSupported = false;
+        }
+        return readCertificateCanonically(path);
+    }
+
+    /**
+     * FCI form of the cert read. Returns {@code null} — leaving the caller to
+     * retry canonically — when the card's FCI cannot be trusted, either
+     * because it declares no plausible size or because the bytes it bounded
+     * are not a certificate.
+     */
+    private byte[] readCertificateViaFci(CertificateType type, byte[] path)
+            throws SmartCardReaderException {
         selectMainAid();
-        byte[] fci = reader.transmit(0x00, 0xA4, 0x09, 0x04, CERT_MAP.get(type), null);
+        byte[] fci = reader.transmit(0x00, 0xA4, 0x09, 0x04, path, null);
 
         Integer size = parseFciSize(fci);
-        if (size != null) {
+        if (size == null || size < MIN_PLAUSIBLE_CERT_SIZE) {
             LoggingUtil.Companion.debugLog(TAG, String.format(
-                    "certificate(%s): FCI fast path, declared size=%d bytes",
-                    type, size), null);
-            return readBoundedByFciSize(size);
+                    "certificate(%s): FCI has no usable size (declared=%s, fci=%s)"
+                            + " — falling back to 6B 00 loop for this session",
+                    type, size, Hex.toHexString(fci)), null);
+            return null;
+        }
+
+        LoggingUtil.Companion.debugLog(TAG, String.format(
+                "certificate(%s): FCI fast path, declared size=%d bytes",
+                type, size), null);
+        byte[] certificate = readBoundedByFciSize(size);
+        if (looksLikeDerCertificate(certificate)) {
+            return certificate;
         }
         LoggingUtil.Companion.debugLog(TAG, String.format(
-                "certificate(%s): FCI lacks tag 0x80/0x81 size — falling back to 6B 00 loop",
-                type), null);
+                "certificate(%s): FCI-bounded read returned %d bytes that are not DER"
+                        + " — falling back to 6B 00 loop for this session",
+                type, certificate.length), null);
+        return null;
+    }
+
+    /**
+     * Canonical cert read: SELECT without requesting the FCI, so the card is
+     * left in exactly the state the pre-FCI implementation used, then read
+     * until {@code 6B 00}.
+     */
+    private byte[] readCertificateCanonically(byte[] path) throws SmartCardReaderException {
+        selectMainAid();
+        reader.transmit(0x00, 0xA4, 0x09, 0x0C, path, null);
         return readUntilEof();
+    }
+
+    /**
+     * True when {@code data} plausibly starts an X.509 certificate: DER
+     * SEQUENCE (tag {@code 30}) with a multi-byte definite length, and at
+     * least as many bytes present as that length announces. Guards against
+     * accepting a truncated or empty FCI-bounded read as a certificate.
+     */
+    private static boolean looksLikeDerCertificate(byte[] data) {
+        if (data.length < 4 || data[0] != 0x30) {
+            return false;
+        }
+        int lengthOfLength = (data[1] & 0xFF) - 0x80;
+        if (lengthOfLength < 1 || lengthOfLength > 3 || data.length < 2 + lengthOfLength) {
+            return false;
+        }
+        int length = 0;
+        for (int i = 0; i < lengthOfLength; i++) {
+            length = (length << 8) | (data[2 + i] & 0xFF);
+        }
+        return data.length >= 2 + lengthOfLength + length;
     }
 
     /**
@@ -146,6 +252,11 @@ abstract class Idemia implements Token {
      * {@value #READ_BINARY_CHUNK_LE}. A 6B 00 mid-read or zero-length
      * response is treated as graceful EOF — the card decided to deliver
      * less than declared, which we tolerate rather than throw.
+     * <p>
+     * Any other error SW propagates as the original {@link
+     * ApduResponseException} rather than being wrapped, so
+     * {@link #certificate(CertificateType)} can recognise it as "this card
+     * does not do the FCI form" and retry canonically.
      */
     private byte[] readBoundedByFciSize(int size) throws SmartCardReaderException {
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
@@ -163,7 +274,7 @@ abstract class Idemia implements Token {
                 if (e.sw1 == (byte) 0x6B && e.sw2 == (byte) 0x00) {
                     break;
                 }
-                throw new SmartCardReaderException(e);
+                throw e;
             } catch (IOException e) {
                 throw new SmartCardReaderException(e);
             }

@@ -18,11 +18,15 @@ import java.util.EnumSet;
 /**
  * Locks in the ATR → concrete-token dispatch in {@link TokenWithPace#create}.
  * A refactor that loses an entry or reorders branches would surface here.
+ *
+ * <p>Test names use the ASCII product marking in the historical bytes
+ * ("SeID" / "TeID2") rather than newer/older: on the LV cards the
+ * TeID2-marked one is the newer card. See {@link TokenWithPace}.
  */
 public final class TokenWithPaceCreateTest {
 
     @Test
-    public void create_estonianIdemiaNewerAts_returnsIdemiaWithPace() throws Exception {
+    public void create_estonianIdemiaSeidAts_returnsIdemiaWithPace() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012233f536549440f9000"), TokenWithPaceConfig.allowAll());
         assertThat(token).isInstanceOf(IdemiaWithPace.class);
@@ -32,7 +36,7 @@ public final class TokenWithPaceCreateTest {
     }
 
     @Test
-    public void create_estonianIdemiaOlderAts_returnsIdemiaWithPace() throws Exception {
+    public void create_estonianIdemiaTeid2Ats_returnsIdemiaWithPace() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012233f54654944320f9000"), TokenWithPaceConfig.allowAll());
         assertThat(token).isInstanceOf(IdemiaWithPace.class);
@@ -49,7 +53,7 @@ public final class TokenWithPaceCreateTest {
     }
 
     @Test
-    public void create_latvianIdemiaNewerAts_returnsLatviaIdemiaWithPace() throws Exception {
+    public void create_latvianIdemiaSeidAts_returnsLatviaIdemiaWithPace() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012428f536549440f9000"), TokenWithPaceConfig.allowAll());
         assertThat(token).isInstanceOf(LatviaIdemiaWithPace.class);
@@ -58,7 +62,7 @@ public final class TokenWithPaceCreateTest {
     }
 
     @Test
-    public void create_latvianIdemiaOlderAts_returnsLatviaIdemiaWithPace() throws Exception {
+    public void create_latvianIdemiaTeid2Ats_returnsLatviaIdemiaWithPace() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012428f54654944320f9000"), TokenWithPaceConfig.allowAll());
         assertThat(token).isInstanceOf(LatviaIdemiaWithPace.class);

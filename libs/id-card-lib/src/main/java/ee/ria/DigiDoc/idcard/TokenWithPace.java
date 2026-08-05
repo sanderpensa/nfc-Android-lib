@@ -34,19 +34,35 @@ import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil;
 public interface TokenWithPace extends Token {
     String TAG = TokenWithPace.class.getName();
 
-    // ATS historical-byte patterns used to identify card generation. The
-    // trailing ASCII bytes encode the chip family: "SeID" (newer generation,
-    // 53 65 49 44) and "TeID2" (older Te+ID 2.x generation, 54 65 49 44 32).
-    // The 23 3f / 42 8f bytes encode the issuer country (EE vs LV).
-    /** Estonian IDEMIA, newer "SeID" historical bytes. */
+    // ATS historical-byte patterns used to identify the card variant. The
+    // trailing ASCII bytes name the product marking — "SeID" (53 65 49 44) or
+    // "TeID2" (54 65 49 44 32); the 23 3f / 42 8f bytes encode the issuer
+    // country (EE vs LV). The constant names follow those ASCII markers only.
+    // Do NOT read them as a generation ordering: on the LV test cards the
+    // "TeID2"-marked card is the newer one (observed 2026-08-05), and the two
+    // markings also differ in card-internal behaviour — see the note on
+    // ATS_LV_IDEMIA_SEID. Both LV markings map to CardType.LATVIA_IDEMIA, so
+    // nothing here depends on which is which; the variant differences are
+    // handled where they surface (Idemia.certificate()).
+    /** Estonian IDEMIA, "SeID"-marked historical bytes. */
     byte[] ATS_EE_IDEMIA_SEID = Hex.decode("0012233f536549440f9000");
-    /** Estonian IDEMIA, older "TeID2" historical bytes. */
+    /** Estonian IDEMIA, "TeID2"-marked historical bytes. */
     byte[] ATS_EE_IDEMIA_TEID2 = Hex.decode("0012233f54654944320f9000");
     /** Estonian Thales (single known ATS as of writing). */
     byte[] ATS_EE_THALES = Hex.decode("8031d85365494464b085051012233f");
-    /** Latvian IDEMIA, newer "SeID" historical bytes. */
+    /**
+     * Latvian IDEMIA, "SeID"-marked historical bytes. The older of the two LV
+     * test cards. Answers the cert SELECT's FCI form with an unusable size
+     * (tag {@code 80} = 1), so certificate reads fall back to the canonical
+     * {@code 6B 00} loop — see {@code Idemia.certificate()} and
+     * {@code LatviaIdemiaCertFciFallbackReplayTest}.
+     */
     byte[] ATS_LV_IDEMIA_SEID = Hex.decode("0012428f536549440f9000");
-    /** Latvian IDEMIA, older "TeID2" historical bytes. */
+    /**
+     * Latvian IDEMIA, "TeID2"-marked historical bytes. The newer of the two LV
+     * test cards; its FCI declares real content sizes (1182-byte auth cert,
+     * 1573-byte sign cert) and the FCI fast path works.
+     */
     byte[] ATS_LV_IDEMIA_TEID2 = Hex.decode("0012428f54654944320f9000");
 
     /**

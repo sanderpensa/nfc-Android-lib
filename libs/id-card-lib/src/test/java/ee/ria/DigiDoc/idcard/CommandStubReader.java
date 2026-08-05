@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
 import ee.ria.DigiDoc.smartcardreader.ApduResponseException;
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 import ee.ria.DigiDoc.smartcardreader.nfc.NfcSmartCardReader;
 
 import org.mockito.MockMakers;
@@ -60,7 +61,8 @@ final class CommandStubReader {
         return this;
     }
 
-    CommandStubReader throwOn(int cla, int ins, ApduResponseException ex) {
+    /** Queue a thrown exception for (cla, ins) — card-level SW or transport failure. */
+    CommandStubReader throwOn(int cla, int ins, SmartCardReaderException ex) {
         push(cla, ins, ex);
         return this;
     }
@@ -85,8 +87,8 @@ final class CommandStubReader {
                         Deque<Object> q = overrides.get((cla << 16) | ins);
                         if (q != null && !q.isEmpty()) {
                             Object next = q.poll();
-                            if (next instanceof ApduResponseException) {
-                                throw (ApduResponseException) next;
+                            if (next instanceof SmartCardReaderException) {
+                                throw (SmartCardReaderException) next;
                             }
                             return (byte[]) next;
                         }
