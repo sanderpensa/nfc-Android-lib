@@ -31,6 +31,8 @@ import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import ee.ria.DigiDoc.smartcardreader.nfc.example.R
 import ee.ria.DigiDoc.smartcardreader.nfc.example.databinding.FragmentUnblockBinding
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.CodeField
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.readCode
 import ee.ria.DigiDoc.smartcardreader.nfc.example.util.HideInput
 
 class UnblockFragment : Fragment() {
@@ -61,25 +63,46 @@ class UnblockFragment : Fragment() {
         pukEditText.transformationMethod = HideInput()
         newPinEditText.transformationMethod = HideInput()
 
+        // The new-PIN box accepts a different length depending on which code is
+        // being unblocked, so it names only the one currently selected rather
+        // than making the reader work out which half applies to them.
+        showNewPinHint()
+        pinTypeGroup.setOnCheckedChangeListener { _, _ -> showNewPinHint() }
+
         cancelButton.setOnClickListener {
             findNavController().popBackStack(R.id.homeFragment, false)
         }
 
         nextButton.setOnClickListener {
-            val pinType = if (pinTypeGroup.checkedRadioButtonId == R.id.radio_pin1) {
-                "PIN1"
-            } else {
-                "PIN2"
-            }
+            val unblocking = selectedPinType()
+            // Validate before navigating: this screen *sets* the new code, so an
+            // empty box would leave the card holding a PIN nobody can type.
+            val puk = pukEditText.readCode(CodeField.PUK) ?: return@setOnClickListener
+            val newPin = newPinEditText.readCode(unblocking) ?: return@setOnClickListener
             val bundle = Bundle()
             bundle.putString("get", "unblock")
-            bundle.putByteArray("puk", pukEditText.text.toString().toByteArray())
-            bundle.putByteArray("newPin", newPinEditText.text.toString().toByteArray())
-            bundle.putString("pinType", pinType)
+            bundle.putByteArray("puk", puk.toByteArray())
+            bundle.putByteArray("newPin", newPin.toByteArray())
+            bundle.putString("pinType", unblocking.label)
             findNavController().navigate(R.id.action_unblockFragment_to_cardReaderFragment, bundle)
         }
 
         handleOnBackPressed()
+    }
+
+    private fun selectedPinType(): CodeField =
+        if (pinTypeGroup.checkedRadioButtonId == R.id.radio_pin1) {
+            CodeField.PIN1
+        } else {
+            CodeField.PIN2
+        }
+
+    private fun showNewPinHint() {
+        val type = selectedPinType()
+        newPinEditText.hint = getString(R.string.new_pin_hint, type.label, type.min, type.max)
+        // Any error still on screen was measured against the other code's
+        // length rule, so it no longer means anything.
+        newPinEditText.error = null
     }
 
     private fun handleOnBackPressed() {

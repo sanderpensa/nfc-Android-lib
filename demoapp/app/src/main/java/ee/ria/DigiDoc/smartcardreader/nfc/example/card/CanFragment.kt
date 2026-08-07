@@ -31,6 +31,8 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import ee.ria.DigiDoc.smartcardreader.nfc.example.R
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.CodeField
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.readCode
 import ee.ria.DigiDoc.smartcardreader.nfc.example.databinding.FragmentCanBinding
 import ee.ria.DigiDoc.smartcardreader.nfc.example.viewmodel.DataViewModel
 
@@ -68,7 +70,8 @@ class CanFragment : Fragment() {
             }
         }
         nextButton.setOnClickListener {
-            dataViewModel.setCan(canFieldEditText.text.toString())
+            val can = canFieldEditText.readCode(CodeField.CAN) ?: return@setOnClickListener
+            dataViewModel.setCan(can)
             val bundle = Bundle()
             if (get.equals("signature")) {
                 findNavController().navigate(R.id.action_canFragment_to_pin2Fragment)

@@ -81,7 +81,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:checked="true"
+                android:checked="false"
                 android:text="@string/extend_signature"
                 android:textColor="@color/text_primary"
                 android:textSize="12sp" />

@@ -51,8 +51,12 @@ object Utils {
      * signs — adds the XAdES-T timestamp + OCSP, requiring network access to
      * the CA endpoints (e.g. dd-at.ria.ee). When false, the signature is left
      * at the BES baseline (no network needed). Toggled from the container UI.
+     *
+     * <p>Defaults to false: extending needs the CA endpoints to be reachable,
+     * and a failure there aborts a signature the card has already produced.
+     * Opting in makes that dependency the tester's deliberate choice.
      */
-    var extendSignature = true
+    var extendSignature = false
 
     var signatureIsAdded = false
 

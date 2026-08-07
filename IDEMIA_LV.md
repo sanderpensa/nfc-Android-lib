@@ -720,7 +720,7 @@ regardless of which form you use.
 | Code | VERIFY P2 | Retry-counter ref | Allowed length | Notes                                                        |
 | ---- | --------- | ----------------- | -------------- | ------------------------------------------------------------ |
 | PIN1 | `0x01`    | `0x01`            | 4–12           | Auth + decrypt + cert ops; verify after MAIN or Oberthur AID |
-| PIN2 | `0x85`    | `0x05`            | 6–12           | Signing only; verify after QSCD AID                          |
+| PIN2 | `0x85`    | `0x05`            | 5–12           | Signing only; verify after QSCD AID                          |
 | PUK  | `0x02`    | `0x02`            | 8–12           | Unblock; verify after MAIN AID                               |
 
 All PIN values are right-padded with `0xFF` to **12 bytes** before

@@ -21,7 +21,7 @@
     <string name="back">Back</string>
     <string name="check_connection">Check connection</string>
     <string name="add_can">Add CAN</string>
-    <string name="can_hint">123456</string>
+    <string name="can_hint">6 digits</string>
     <string name="can_info">6 digit number, can be found on the ID card under the card holder\'s picture</string>
     <string name="optional">OPTIONAL:</string>
     <string name="container_name">Container name</string>
@@ -36,10 +36,11 @@
     <string name="card">Card</string>
     <string name="add_pin1">Add PIN 1</string>
     <string name="pin1_info">4–12 digits</string>
-    <string name="pin1_hint">1234</string>
+    <string name="pin1_hint">4-12 digits</string>
+    <string name="new_pin_hint">New %1$s: %2$d-%3$d digits</string>
     <string name="add_pin2">Add PIN 2</string>
     <string name="pin2_info">5–12 digits</string>
-    <string name="pin2_hint">12345</string>
+    <string name="pin2_hint">5-12 digits</string>
     <string name="pin1_counter">PIN1 tries left: %1$d</string>
     <string name="pin2_counter">PIN2 tries left: %1$d</string>
     <string name="unblock">Unblock PIN</string>
@@ -47,7 +48,7 @@
     <string name="pin1_label">PIN 1</string>
     <string name="pin2_label">PIN 2</string>
     <string name="add_puk">PUK</string>
-    <string name="puk_hint">12345678</string>
+    <string name="puk_hint">8-12 digits</string>
     <string name="new_pin">New PIN</string>
     <string name="unblock_success">PIN unblocked successfully</string>
     <!-- TODO: Remove or change this placeholder text -->

@@ -29,6 +29,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.navigation.fragment.findNavController
 import ee.ria.DigiDoc.smartcardreader.nfc.example.R
 import ee.ria.DigiDoc.smartcardreader.nfc.example.databinding.FragmentPin2Binding
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.CodeField
+import ee.ria.DigiDoc.smartcardreader.nfc.example.util.readCode
 import ee.ria.DigiDoc.smartcardreader.nfc.example.util.HideInput
 
 class Pin2Fragment : Fragment() {
@@ -59,9 +61,10 @@ class Pin2Fragment : Fragment() {
         }
 
         nextButton.setOnClickListener {
+            val pin2 = addPin2EditText.readCode(CodeField.PIN2) ?: return@setOnClickListener
             val bundle = Bundle()
             bundle.putString("get", "signature")
-            bundle.putByteArray("pin2", addPin2EditText.text.toString().toByteArray())
+            bundle.putByteArray("pin2", pin2.toByteArray())
             findNavController().navigate(R.id.action_pin2Fragment_to_cardReaderFragment, bundle)
         }
 
