@@ -239,33 +239,28 @@ public final class IdemiaCodeManagementTest {
     }
 
     @Test
-    public void certificate_fciDeclaresImplausiblySmallSize_fallsBackToEofLoop() throws Exception {
+    public void certificate_fciDeclaresImplausiblySmallSize_skipsThatEfEntirely() throws Exception {
         // Older LV cards answer P2 = 0x04 with a well-formed FCP declaring
-        // tag 80 = 0x0001 for the cert EF (see
-        // LatviaIdemiaCertFciFallbackReplayTest). Reading that one byte and
-        // handing it upstream surfaced as "No certificate found", so an
-        // implausible size is treated as no size at all.
-        byte[] certContent = derCertificate(256);
+        // tag 80 = 0x0001 for the cert EF (see LatviaIdemiaCertLookupReplayTest).
+        // That is the card stating the file is empty, so there is nothing to be
+        // gained by reading it either way: no READ BINARY against the declared
+        // size, and no canonical re-SELECT of the same EF.
         CommandStubReader stub = new CommandStubReader()
-                .respondTo(0x00, 0xA4, new byte[0])                     // SELECT MAIN AID
-                .respondTo(0x00, 0xA4, Hex.decode("62088002000183023401"))  // FCP, size = 1
-                .respondTo(0x00, 0xA4, new byte[0])                     // SELECT MAIN AID (retry)
-                .respondTo(0x00, 0xA4, new byte[0])                     // SELECT cert, P2 = 0x0C
-                .respondTo(0x00, 0xB0, certContent)
-                .throwOn(0x00, 0xB0, new ApduResponseException((byte) 0x6B, (byte) 0x00));
+                .respondTo(0x00, 0xA4, new byte[0])                         // SELECT MAIN AID
+                .respondTo(0x00, 0xA4, Hex.decode("62088002000183023401")); // FCP, size = 1
         IdemiaWithPace token = new IdemiaWithPace(stub.build());
 
-        byte[] cert = token.certificate(CertificateType.AUTHENTICATION);
+        // This model knows no other location, so the search goes on to PKCS#15,
+        // which this stub cannot satisfy either.
+        CertificateNotFoundException thrown = assertThrows(CertificateNotFoundException.class,
+                () -> token.certificate(CertificateType.AUTHENTICATION));
+        assertThat(thrown).hasMessageThat().contains("EF adf13401 (declared empty by its FCI)");
 
-        assertThat(cert).isEqualTo(certContent);
-        // No READ BINARY is issued against the bogus size — the third APDU is
-        // already the re-SELECT of the canonical (pre-FCI) sequence.
         CommandStubReader.assertHeader(stub.captured.get(1), 0x00, 0xA4, 0x09, 0x04);
+        // Next APDU is already the applet SELECT that starts the PKCS#15 walk.
         CommandStubReader.assertHeader(stub.captured.get(2), 0x00, 0xA4, 0x04, 0x0C);
-        CommandStubReader.Apdu canonicalSelect = stub.captured.get(3);
-        CommandStubReader.assertHeader(canonicalSelect, 0x00, 0xA4, 0x09, 0x0C);
-        assertThat(canonicalSelect.data).isEqualTo(Hex.decode("ADF13401"));
-        CommandStubReader.assertHeader(stub.captured.get(4), 0x00, 0xB0, 0x00, 0x00);
+        assertThat(stub.captured.stream()
+                .noneMatch(a -> a.ins == 0xA4 && a.p1 == 0x09 && a.p2 == 0x0C)).isTrue();
     }
 
     @Test
@@ -355,14 +350,16 @@ public final class IdemiaCodeManagementTest {
     @Test
     public void certificate_afterFciFallback_skipsFciProbeForRestOfSession() throws Exception {
         // The FCI verdict is remembered per token instance (= per card
-        // session): having learned that this card's FCI is unusable, the
+        // session): having learned that this card's FCI is inconclusive, the
         // second cert read emits the pre-FCI sequence only — no P2 = 0x04
-        // SELECT, so no wasted round-trip.
+        // SELECT, so no wasted round-trip. An FCI that declares an implausible
+        // size is a different case: that one is conclusive, and skips the EF
+        // rather than falling back to the canonical read.
         byte[] authCert = derCertificate(256);
         byte[] signCert = derCertificate(300);
         CommandStubReader stub = new CommandStubReader()
                 .respondTo(0x00, 0xA4, new byte[0])                     // SELECT MAIN AID
-                .respondTo(0x00, 0xA4, Hex.decode("62088002000183023401"))  // FCP, size = 1
+                .respondTo(0x00, 0xA4, Hex.decode("AA0511223344"))      // FCP, no size tag
                 .respondTo(0x00, 0xA4, new byte[0])                     // SELECT MAIN AID (retry)
                 .respondTo(0x00, 0xA4, new byte[0])                     // SELECT cert, P2 = 0x0C
                 .respondTo(0x00, 0xB0, authCert)
@@ -390,8 +387,10 @@ public final class IdemiaCodeManagementTest {
     public void certificate_fciAbsent_fallsBackToEofLoop() throws Exception {
         // No tag 80/81 in FCI → switch to canonical READ BINARY loop until
         // 6B 00. Single-chunk payload here; multi-chunk variant below proves
-        // the loop doesn't silently truncate past a fixed size.
-        byte[] payloadChunk = new byte[] {0x01, 0x02, 0x03};
+        // the loop doesn't silently truncate past a fixed size. The payload is
+        // DER-shaped because certificate() now rejects an answer that cannot be
+        // a certificate at all — see certificate_efHoldsNoCertificate_throws.
+        byte[] payloadChunk = derCertificate(300);
         CommandStubReader stub = new CommandStubReader()
                 .respondTo(0x00, 0xA4, new byte[0])
                 .respondTo(0x00, 0xA4, Hex.decode("AA0511223344"))   // unrelated tag
@@ -409,10 +408,7 @@ public final class IdemiaCodeManagementTest {
         // Regression: with the old "size defaults to 0xE5" form, this would
         // have silently truncated to 229 bytes. The EOF loop reads all chunks
         // until 6B 00 terminates — proves there's no hidden truncation cap.
-        byte[] firstChunk = new byte[300];   // bigger than the old 0xE5 cap
-        for (int i = 0; i < firstChunk.length; i++) {
-            firstChunk[i] = (byte) (i & 0xFF);
-        }
+        byte[] firstChunk = derCertificate(296);   // 300 bytes: past the old 0xE5 cap
         byte[] secondChunk = new byte[]{(byte) 0xAA, (byte) 0xBB};
         CommandStubReader stub = new CommandStubReader()
                 .respondTo(0x00, 0xA4, new byte[0])
@@ -427,10 +423,52 @@ public final class IdemiaCodeManagementTest {
         // Both chunks delivered, then 6B 00 terminated cleanly. 302 > 229
         // proves we're past the old fallback size.
         assertThat(cert).hasLength(302);
-        assertThat(cert[0]).isEqualTo((byte) 0x00);
-        assertThat(cert[299]).isEqualTo((byte) (299 & 0xFF));
+        assertThat(cert[0]).isEqualTo((byte) 0x30);
+        assertThat(cert[299]).isEqualTo((byte) 0x41);
         assertThat(cert[300]).isEqualTo((byte) 0xAA);
         assertThat(cert[301]).isEqualTo((byte) 0xBB);
+    }
+
+    @Test
+    public void certificate_efHoldsNoCertificate_throwsCertificateNotFound()
+            throws Exception {
+        // Card answers the canonical read with a single 0x00 byte and then EOF —
+        // the LV "SeID" transcript from 2026-08-06. That cannot be a certificate
+        // under any read form, so certificate() reports it rather than handing
+        // one byte to CertificateFactory (which fails with "No certificate
+        // found", historically thrown on the NFC binder thread).
+        CommandStubReader stub = new CommandStubReader()
+                .respondTo(0x00, 0xA4, new byte[0])
+                .respondTo(0x00, 0xA4, Hex.decode("AA0511223344"))   // FCI, no size tag
+                .respondTo(0x00, 0xB0, new byte[] {0x00})
+                .throwOn(0x00, 0xB0, new ApduResponseException((byte) 0x6B, (byte) 0x00));
+        IdemiaWithPace token = new IdemiaWithPace(stub.build());
+
+        CertificateNotFoundException thrown = assertThrows(CertificateNotFoundException.class,
+                () -> token.certificate(CertificateType.AUTHENTICATION));
+
+        assertThat(thrown.certificateType()).isEqualTo(CertificateType.AUTHENTICATION);
+        assertThat(thrown).hasMessageThat()
+                .isEqualTo("No AUTHENTICATION certificate on card. Searched:"
+                        + " EF adf13401 (1 byte(s));"
+                        + " the PKCS#15 certificate directory (named none)");
+        // The card was asked where its certificates are (EF.OD 50 31) before
+        // giving up. It was not asked about 34 02: that file id is evidence
+        // from one LV card, so only that card's implementation names it —
+        // an EE card must not spend APDUs guessing at it.
+        assertThat(selectsOfEf(stub, "5031")).isEqualTo(1);
+        assertThat(selectsOfEf(stub, "3402")).isEqualTo(0);
+        // …and it left the card on MAIN AID, so the next Token call is unaffected.
+        CommandStubReader.Apdu last = stub.captured.get(stub.captured.size() - 1);
+        CommandStubReader.assertHeader(last, 0x00, 0xA4, 0x04, 0x0C);
+    }
+
+    /** How many times {@code SELECT EF by FID} named this file id. */
+    private static long selectsOfEf(CommandStubReader stub, String fileIdHex) {
+        return stub.captured.stream()
+                .filter(a -> a.ins == 0xA4 && a.p1 == 0x02 && a.data != null
+                        && Arrays.equals(a.data, Hex.decode(fileIdHex)))
+                .count();
     }
 
     /** Stub for the FCI fast path: SELECT MAIN AID, SELECT cert (FCI), reads. */

@@ -40,7 +40,7 @@ recognises two LV variants:
 
 | Variant                    | Bytes                                 | Cert-read note                                    |
 | -------------------------- | ------------------------------------- | ------------------------------------------------- |
-| `SeID`-marked (older card)  | `00 12 42 8F 53 65 49 44 0F 90 00`    | FCI declares size 1 — needs Form B, see §6        |
+| `SeID`-marked (older card)  | `00 12 42 8F 53 65 49 44 0F 90 00`    | §8's EFs are empty placeholders; real certs at `34 02` / `34 1E` per PKCS#15 — §6, §8.1 |
 | `TeID2`-marked (newer card) | `00 12 42 8F 54 65 49 44 32 0F 90 00` | FCI declares real sizes — Form A works            |
 
 The trailing ASCII marking (`SeID` = `53 65 49 44`, `TeID2` = `54 65 49 44 32`)
@@ -636,14 +636,23 @@ explicit `Le`.
 >
 > File ID, transparent-EF descriptor and life-cycle byte are all correct,
 > and `READ BINARY` at offset 0 then returns a single `0x00` byte — so the
-> bogus size is not detectable from the SW either. Form B reads the same
-> file in full on those cards. The Android lib therefore only keeps the
-> Form A result when the declared size is plausible for a certificate
-> (≥ 256 bytes) **and** the bytes read begin a DER `SEQUENCE` whose length
-> is fully present; otherwise it re-SELECTs with `P2 = 0C` and falls back
-> to Form B. The verdict is remembered for the rest of the card session, so
-> only the first certificate read on an affected card pays for the probe.
-> Port that guard, not just the fast path.
+> size is not detectable from the SW either. The Android lib therefore only
+> keeps the Form A result when the declared size is plausible for a
+> certificate (≥ 256 bytes) **and** the bytes read begin a DER `SEQUENCE`
+> whose length is fully present; otherwise it re-SELECTs with `P2 = 0C` and
+> falls back to Form B. The verdict is remembered for the rest of the card
+> session, so only the first certificate read on an affected card pays for
+> the probe. Port that guard, not just the fast path.
+>
+> **But do not assume Form B recovers the file.** On the LV `SeID` test card
+> observed on 2026-08-06, Form B returns the *same* single `0x00` byte and
+> then `6B 00` at offset 1 — the declared size 1 was the truth, and EF
+> `AD F1 34 01` really is an empty placeholder. `Le = 00` reads are fine on
+> that card (EF `50 01` returns its full 12 bytes the same session), so this
+> is not a read-form problem: the certificate is in a *different EF*, and
+> §8.1 shows how to get its file id out of PKCS#15. So treat "both forms
+> return the same short answer" as "wrong file", not as a size-reporting bug
+> — and never as "no certificate" until PKCS#15 agrees.
 
 #### Form B — `6B 00`-terminated reads (canonical ISO 7816-4 / spec form)
 
@@ -803,6 +812,90 @@ Both `<P2>` forms work — use `0x04` for FCI-bounded reads (§6 Form A,
 ~170–380 ms faster) or `0x0C` for canonical `6B 00`-terminated reads
 (§6 Form B). The reference Android and iOS implementations both use
 Form A. Result is the DER-encoded X.509 certificate.
+
+### 8.1 The certificate file id is not fixed — ask PKCS#15
+
+The paths in §8 are not universal. On the LV `SeID` test card (observed
+2026-08-06) EF `AD F1 34 01` and `AD F2 34 1F` are **1-byte placeholders**:
+FCI `80 02 00 01`, `READ BINARY` → one `0x00` byte, `6B 00` at offset 1,
+identically under both read forms of §6. The certificates are there — one
+file id over — and only PKCS#15 says where:
+
+```
+SELECT Oberthur AWP AID          ← authentication side (CERT_MAP's AD F1 DF)
+00 A4 02 0C 02 50 31             ← EF.OD, read per §6 Form B
+    → A8 …7001  A0 …7002  A1 …7004  A4 …7005  A7 …7006
+       [4] = certificates → CDF 70 05
+00 A4 02 0C 02 70 05
+    → 30 4D  30 29 0C 11 "Authentication 02" …  A1 08 30 06 30 04 04 02 34 02
+                                                                       ^^^^^ path
+00 A4 02 0C 02 34 02             ← the actual auth certificate EF
+```
+
+The QSCD applet answers the same way: EF.OD `[4]` → CDF `70 15` → one entry
+labelled "Signature 1E" with Path `34 1E`. Note that the CDF label spells the
+file id out in both cases, and that `34 02` / `34 1E` are each one off from
+the hardcoded `34 01` / `34 1F` — so a card whose personalisation shifted the
+files leaves the old ids behind as empty placeholders rather than deleting
+them, which is exactly what makes the failure look like "no certificates".
+
+Read the Path out of the CDF entry's `[1]` typeAttributes, not by searching
+the entry for the first `OCTET STRING`: commonObjectAttributes carry a 20-byte
+id in an `OCTET STRING` of their own, which an unscoped search returns instead.
+
+**Recommended order** (what the Android lib does). Both EFs a certificate is
+known to live in are tried, in whichever order suits the card in hand, with
+the directory walk behind them:
+
+1. **The EF this card's personalisation uses.** The ATS says which that is:
+   `SeID`-marked cards go straight to `34 02` / `34 1E` in the applet,
+   everything else to `AD F1 34 01` / `AD F2 34 1F` under MAIN. Neither
+   starts with an EF expected to be empty, so the common case costs nothing.
+2. **Any other EF that card is known to use.** A `SeID` card keeps
+   `AD F1 34 01` / `AD F2 34 1F` here as a second try, since an unexpected
+   personalisation is likelier than its applet EF being unreadable.
+3. **The EF.OD → CDF walk** above, in the applet owning the key, if neither
+   does. Seven APDUs (~350 ms over NFC), and the card's own answer, so it
+   remains the authority for any personalisation the file ids do not fit.
+
+Treat the ATS as a hint and never a rule: validate the DER envelope at every
+step — that is what stops a guess from becoming the wrong certificate — and
+keep steps 2 and 3 reachable, so a card whose layout does not match its
+marking is still read correctly, just a few APDUs slower.
+
+Keep each file id with the card it was observed on. `34 02` / `34 1E` are
+evidence from one `SeID` card, so only that card's code path names them; an
+Estonian card that finds its own EF empty goes straight to the walk rather
+than spending two APDUs guessing at Latvian file ids. A shared list of
+"other places certificates might be" costs every model APDUs for evidence
+that belongs to one of them.
+
+Two things make the empty EF cheap to rule out. A card that answers
+`P2 = 0x04` with a **declared size too small to be a certificate** (`80 02 00
+01`) has told you the file is empty; believe it and move on rather than
+spending a SELECT and two READs confirming it under Form B. Reserve the
+canonical read for genuinely inconclusive answers — no size tag, a rejected
+`P2 = 0x04`, or a bounded read that is not DER — which is the case §6 warns
+about. And distinguish the card declining (an error SW: try the next location)
+from the link failing (SM or transport: stop, because every other location
+will fail too).
+
+Do **not** re-SELECT the applet AID between the walk and the certificate read:
+selecting EFs by FID does not change the current DF, so the AID selected for
+EF.OD is still current. Confirmed end to end on 2026-08-06 — EF `34 02`
+returned a valid 1156-byte X.509 certificate and EF `34 1E` a 1547-byte one
+(both "LV eID ICA 2025", valid to 2030-12-02), in `Le = 00` reads. Note the
+block size: **231 bytes**, not 256, because the response has to fit an
+SM-wrapped APDU. Size the read loop off what the card returns, never off an
+assumed 256.
+
+If none of the three finds a certificate, report it rather than passing the
+placeholder to an X.509 parser — the parse error ("no certificate found")
+hides the cause. The Android lib throws a typed `CertificateNotFoundException`
+carrying the type and the EF it started from, and reserves it for exactly this:
+transport, secure-messaging and card errors keep propagating as themselves, so
+a caller can tell "this card has no such certificate" from "the tap went
+wrong". The debug log names which step found it, or why each one gave up.
 
 ---
 

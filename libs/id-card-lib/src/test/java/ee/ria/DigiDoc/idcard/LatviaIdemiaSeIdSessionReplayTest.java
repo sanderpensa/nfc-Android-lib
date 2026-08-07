@@ -1,0 +1,102 @@
+package ee.ria.DigiDoc.idcard;
+
+import static com.google.common.truth.Truth.assertThat;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.bytes;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
+
+import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.DERSequence;
+import org.bouncycastle.util.encoders.Hex;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigInteger;
+import java.security.Signature;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.io.ByteArrayInputStream;
+import java.util.Arrays;
+
+/**
+ * One whole tap of the LV "SeID" card, captured 2026-08-06: read the
+ * authentication certificate, then authenticate with PIN1 over a 48-byte
+ * hash.
+ *
+ * <p>What this covers that the per-step tests do not is the seam between them.
+ * The certificate is not where {@code CERT_MAP} says, so the read ends up in
+ * the Oberthur applet by way of the fallback chain; the authentication that
+ * follows assumes the card was handed back on the MAIN AID. If that hand-back
+ * regresses, every per-step test still passes and this one fails.
+ *
+ * <p>The closing assertion is the strong one: the captured signature is
+ * verified against the public key of the captured certificate. It only holds
+ * if both fixtures really came from the same card — no arrangement of correct
+ * APDUs can fake it — so it also rules out the two halves having drifted apart
+ * during transcription.
+ */
+public final class LatviaIdemiaSeIdSessionReplayTest {
+
+    private static final String SELECT_MAIN_AID =
+            "00a4040c10a000000077010800070000fe00000100";
+    private static final String SELECT_OBERTHUR_AID =
+            "00a4040c0de828bd080ff2504f5420415750";
+
+    /**
+     * The hash the demo app asked the card to sign, and the 96-byte
+     * ECDSA-P384 {@code r || s} it answered with. Both from the same capture as
+     * the certificate.
+     */
+    private static final String CAPTURED_AUTH_HASH =
+            "592339cef290ada30eac71d4cbb0420b479c1a0936fe0225a0fbc6dc2e51ff58"
+                    + "cfd5add29772de4368eb1b024f1cbc8a";
+    private static final String CAPTURED_AUTH_SIGNATURE =
+            "ab30b4c15f38bb6cd99b21a7ddec2c11d2eea3c969c07c225ae9ed4e5f8ab9ff"
+                    + "265b8a567393b1cc24251d250930ddf3d4c479ea87a44cd980143fd1b7d9efb0"
+                    + "1feba78de1f89e1d69b14d7430ea19ae6a14ec352019940a2633b156c91e9dbe";
+
+    @Test
+    public void certificateThenAuthenticate_replaysOneSeIdTap() throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                .with(LatviaIdemiaCertLookupReplayTest::loadSeidAuthCertRead)
+                .with(r -> {
+                    // Straight into the auth flow — the cert read above left the
+                    // card on MAIN, which is what this SELECT assumes.
+                    r.expect(SELECT_OBERTHUR_AID, ok());
+                    r.expect("00200001" + "0c" + TestPins.PIN1_PADDED_FF, ok());
+                    r.expect("002241a4" + "06" + "800104" + "840182", ok());
+                    r.expect("00880000" + "30" + CAPTURED_AUTH_HASH + "00",
+                            bytes(CAPTURED_AUTH_SIGNATURE));
+                })
+                .tunnel();
+
+        byte[] certificate = fixture.token.certificate(CertificateType.AUTHENTICATION);
+        byte[] signature = fixture.token.authenticate(
+                TestPins.PIN1, Hex.decode(CAPTURED_AUTH_HASH));
+
+        assertThat(Hex.toHexString(signature)).isEqualTo(CAPTURED_AUTH_SIGNATURE);
+        assertSignedBy(certificate, Hex.decode(CAPTURED_AUTH_HASH), signature);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * Verify a raw {@code r || s} card signature over an already-hashed input
+     * against the certificate's public key. The card returns the two 48-byte
+     * halves bare, so they are wrapped into the DER SEQUENCE that
+     * {@code NONEwithECDSA} expects.
+     */
+    private static void assertSignedBy(byte[] certificate, byte[] digest, byte[] rawSignature)
+            throws Exception {
+        int half = rawSignature.length / 2;
+        BigInteger r = new BigInteger(1, Arrays.copyOfRange(rawSignature, 0, half));
+        BigInteger s = new BigInteger(1, Arrays.copyOfRange(rawSignature, half, rawSignature.length));
+        byte[] derSignature = new DERSequence(
+                new ASN1Integer[] {new ASN1Integer(r), new ASN1Integer(s)}).getEncoded();
+
+        X509Certificate x509 = (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(certificate));
+        Signature verifier = Signature.getInstance("NONEwithECDSA");
+        verifier.initVerify(x509.getPublicKey());
+        verifier.update(digest);
+
+        assertThat(verifier.verify(derSignature)).isTrue();
+    }
+}

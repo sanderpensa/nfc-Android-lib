@@ -41,9 +41,9 @@ public interface TokenWithPace extends Token {
     // Do NOT read them as a generation ordering: on the LV test cards the
     // "TeID2"-marked card is the newer one (observed 2026-08-05), and the two
     // markings also differ in card-internal behaviour — see the note on
-    // ATS_LV_IDEMIA_SEID. Both LV markings map to CardType.LATVIA_IDEMIA, so
-    // nothing here depends on which is which; the variant differences are
-    // handled where they surface (Idemia.certificate()).
+    // ATS_LV_IDEMIA_SEID. Both LV markings map to CardType.LATVIA_IDEMIA — an
+    // integrator who allowed that type means both cards — and create() picks
+    // the implementation that knows where each keeps its certificates.
     /** Estonian IDEMIA, "SeID"-marked historical bytes. */
     byte[] ATS_EE_IDEMIA_SEID = Hex.decode("0012233f536549440f9000");
     /** Estonian IDEMIA, "TeID2"-marked historical bytes. */
@@ -52,10 +52,14 @@ public interface TokenWithPace extends Token {
     byte[] ATS_EE_THALES = Hex.decode("8031d85365494464b085051012233f");
     /**
      * Latvian IDEMIA, "SeID"-marked historical bytes. The older of the two LV
-     * test cards. Answers the cert SELECT's FCI form with an unusable size
-     * (tag {@code 80} = 1), so certificate reads fall back to the canonical
-     * {@code 6B 00} loop — see {@code Idemia.certificate()} and
-     * {@code LatviaIdemiaCertFciFallbackReplayTest}.
+     * test cards, and the one that proves the certificate file ids are not
+     * fixed: both hardcoded cert EFs answer with size 1 (tag
+     * {@code 80 02 00 01}) and a single {@code 0x00} byte under either read
+     * form, while the real certificates sit at {@code 34 02} and {@code 34 1E},
+     * as named by the PKCS#15 CDF of the Oberthur AWP and QSCD applets
+     * (observed 2026-08-06). {@code Idemia.certificate()} tries those two file
+     * ids next and the card's own PKCS#15 directory after them; see
+     * {@code IDEMIA_LV.md} §8.1 and {@code LatviaIdemiaCertLookupReplayTest}.
      */
     byte[] ATS_LV_IDEMIA_SEID = Hex.decode("0012428f536549440f9000");
     /**
@@ -111,7 +115,13 @@ public interface TokenWithPace extends Token {
         return switch (detected) {
             case ID1 -> new IdemiaWithPace(reader);
             case THALES -> new ThalesWithPace(reader);
-            case LATVIA_IDEMIA -> new LatviaIdemiaWithPace(reader);
+            // Both LV markings are one CardType, but they differ in where they
+            // keep their certificates, so they get different implementations.
+            // Keeping the type single is deliberate: an integrator who allowed
+            // LATVIA_IDEMIA means both of these cards.
+            case LATVIA_IDEMIA -> Arrays.equals(ATS_LV_IDEMIA_SEID, atr)
+                    ? new LatviaIdemiaSeIdWithPace(reader)
+                    : new LatviaIdemiaWithPace(reader);
         };
     }
 

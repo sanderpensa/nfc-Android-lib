@@ -26,11 +26,26 @@ final class ReplayFixture {
 
     private ReplayFixture() {}
 
+    /** The LV "TeID2" card — certificates at the model's own EFs. */
     static Builder<LatviaIdemiaWithPace> lv() {
         return new Builder<>(
                 LatviaIdemiaPaceReplayTest::loadPaceTranscript,
                 LatviaIdemiaPaceReplayTest::capturedSession1HostPrivateBytes,
                 LatviaIdemiaWithPace::new,
+                LatviaIdemiaPaceReplayTest.CAN);
+    }
+
+    /**
+     * The LV "SeID" card — same PACE transcript, but the implementation
+     * {@code TokenWithPace.create} picks for its ATS, which looks for
+     * certificates in the applets first. Naming the class here is what makes a
+     * fixture state which physical card it replays.
+     */
+    static Builder<LatviaIdemiaSeIdWithPace> lvSeid() {
+        return new Builder<>(
+                LatviaIdemiaPaceReplayTest::loadPaceTranscript,
+                LatviaIdemiaPaceReplayTest::capturedSession1HostPrivateBytes,
+                LatviaIdemiaSeIdWithPace::new,
                 LatviaIdemiaPaceReplayTest.CAN);
     }
 

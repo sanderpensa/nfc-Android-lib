@@ -361,6 +361,8 @@ The following example demonstrates exception handling during the ID card communi
 private fun exceptionHandler(ex: SmartCardReaderException) {
     if (ex is NotSupportedException) {
         ...
+    } else if (ex is CertificateNotFoundException) {
+        ...
     } else if (ex is CodeVerificationException) {
         ...
     } else if (ex is PaceTunnelException) {
@@ -384,14 +386,19 @@ private fun exceptionHandler(ex: SmartCardReaderException) {
   (a) the detected card's ATR/ATS does not match any supported model (e.g. attempting to read a non-Estonian / non-Latvian / non-Thales ID card), or
   (b) the detected `CardType` is not in the `TokenWithPaceConfig.allowedCardTypes()` passed to `create()` — for example, an integrator scoped to `{ID1, THALES}` will get this when tapping a `LATVIA_IDEMIA` card.
   Catch this case separately to show the user a "card not supported" message rather than a generic communication error.
-* **Line 4:** `ee.ria.DigiDoc.idcard.CodeVerificationException` – specific exception indicating that the PIN1 or PIN2 used for authorization was incorrect.
+* **Line 4:** `ee.ria.DigiDoc.idcard.CertificateNotFoundException` – thrown by `certificate(...)` when the card carries no certificate of the requested type.
+  It is raised only after every known location has been tried and come back empty — each EF this card model keeps certificates in, and then whatever the card's own PKCS#15 directory names —
+  so it is a statement about the card, not about the read: a failed tap surfaces as `ApduResponseException` or `TagLostException` instead.
+  `certificateType()` says which certificate was requested, and the message lists every location searched with what each one held.
+  Treat it as "this card cannot do this" — e.g. a card personalised without a signing certificate — rather than as something a retry will fix.
+* **Line 6:** `ee.ria.DigiDoc.idcard.CodeVerificationException` – specific exception indicating that the PIN1 or PIN2 used for authorization was incorrect.
   The exception includes information on how many attempts remain before the PIN becomes locked.
-* **Line 6:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
+* **Line 8:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
   Most likely, the issue is caused by an incorrect CAN code.
-* **Line 8:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
-* **Line 10:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
-* **Line 13:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
-* **Line 15:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
+* **Line 10:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
+* **Line 12:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
+* **Line 15:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
+* **Line 17:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
 
 ---
 

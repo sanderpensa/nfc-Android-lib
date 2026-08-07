@@ -198,7 +198,13 @@ class CardReaderFragment : Fragment() {
                         findNavController()
                             .navigate(R.id.action_cardReaderFragment_to_authFragment, bundle)
                     }
-                } catch (ex: SmartCardReaderException) {
+                } catch (ex: Exception) {
+                    // Catch Exception, not just SmartCardReaderException: this
+                    // lambda runs on the NFC binder thread, where anything that
+                    // escapes is reported as "Uncaught remote exception" and
+                    // leaves the UI stuck on the reader screen. CertificateFactory
+                    // throwing CertificateException on a card whose cert EF is
+                    // empty used to escape exactly that way.
                     setReaderResult(R.drawable.error)
                     runOnUiAfterDelay {
                         exceptionToast(ex)
@@ -410,9 +416,16 @@ class CardReaderFragment : Fragment() {
         Handler(Looper.getMainLooper()).postDelayed(action, RESULT_ICON_DISPLAY_MS)
     }
 
-    private fun exceptionToast(ex: SmartCardReaderException) {
+    /**
+     * Takes [Exception], not just [SmartCardReaderException]: the NFC callbacks
+     * also have to report failures thrown by non-lib code (e.g. X.509 parsing),
+     * which must not escape onto the binder thread. Messages are read with a
+     * fallback rather than `!!` — not every exception carries one.
+     */
+    private fun exceptionToast(ex: Exception) {
+        val message = ex.message ?: "Error communicating with card"
         if (ex is CodeVerificationException) {
-            Toast.makeText(requireContext(), ex.message!!, Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
         } else if (ex is PaceTunnelException) {
             Toast.makeText(requireContext(), "Wrong CAN", Toast.LENGTH_SHORT).show()
         } else if (ex is ApduResponseException) {
@@ -422,7 +435,7 @@ class CardReaderFragment : Fragment() {
             if (ex.cause is TagLostException) {
                 Toast.makeText(requireContext(), "Tag was lost", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(requireContext(), ex.message!!, Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
             }
         }
     }

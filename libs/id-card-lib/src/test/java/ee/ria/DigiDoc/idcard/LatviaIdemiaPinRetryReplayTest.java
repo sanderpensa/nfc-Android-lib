@@ -24,6 +24,8 @@ public final class LatviaIdemiaPinRetryReplayTest {
 
     private static final String SEL_OBERTHUR_AID =
             "00a4040c0de828bd080ff2504f5420415750";
+    private static final String SEL_QSCD_AID =
+            "00a4040c1051534344204170706c69636174696f6e";
 
     @ParameterizedTest(name = "SW {0} {1} → {2} retries left")
     @CsvSource({
@@ -62,6 +64,33 @@ public final class LatviaIdemiaPinRetryReplayTest {
                 .tunnel();
 
         fixture.token.unblockAndChangeCode(TestPins.PUK, CodeType.PIN1, TestPins.NEW_PIN1);
+
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * PIN2 unblock, from the LV "SeID" capture of 2026-08-06. One APDU longer
+     * than the PIN1 flow and that APDU is the point: the PUK lives under MAIN,
+     * but PIN2 belongs to the QSCD applet, so the card has to be moved there
+     * between VERIFY and RESET. Getting that wrong unblocks nothing while still
+     * answering {@code 90 00}, because {@code P2 = 0x85} means a different key
+     * reference in each applet.
+     *
+     * <p>The captured PUK and PIN2 are replaced with the repo's test constants;
+     * only the card's answers are from the capture.
+     */
+    @Test
+    public void unblockAndChangeCode_pin2_selectsQscdBetweenPukAndReset() throws Exception {
+        var fixture = ReplayFixture.lv()
+                .with(r -> {
+                    r.expect("00a4040c10a000000077010800070000fe00000100", ok());
+                    r.expect("00200002" + "0c" + TestPins.PUK_PADDED_FF, ok());
+                    r.expect(SEL_QSCD_AID, ok());
+                    r.expect("002c0285" + "0c" + TestPins.PIN2_PADDED_FF, ok());
+                })
+                .tunnel();
+
+        fixture.token.unblockAndChangeCode(TestPins.PUK, CodeType.PIN2, TestPins.PIN2);
 
         fixture.assertAllConsumed();
     }
