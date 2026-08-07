@@ -53,7 +53,12 @@ public final class NfcSmartCardReaderTest {
             return new byte[]{(byte) 0x90, 0x00};
         }).when(reader).transmit(any(byte[].class));
 
-        encryptor = mock(ApduEncryptor.class);
+        // Same mock maker as the reader above, deliberately. Mixing makers in
+        // one test — SUBCLASS there, the default inline one here — makes
+        // Mockito 5.20 fail an internal assertion while stubbing this mock,
+        // intermittently and for the whole class, since it happens in setUp.
+        encryptor = mock(ApduEncryptor.class,
+                withSettings().mockMaker(MockMakers.SUBCLASS));
         when(encryptor.encryptAndMac(anyInt(), anyInt(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(new byte[]{0x0C, (byte) 0xA4, 0x04, 0x0C, 0x00, (byte) 0x90, 0x00});
         when(encryptor.decryptAndVerify(any())).thenReturn(new byte[0]);
