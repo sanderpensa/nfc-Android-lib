@@ -161,18 +161,18 @@ public final class ThalesCodeManagementTest {
     }
 
     @Test
-    public void unblockAndChangeCode_pin1_withoutPuk_npesInProductionCode() {
-        // Thales.unblockAndChangeCode has a latent bug for the null-PUK path:
-        // the P1 ternary `pukCode == null ? 0x02 : 0x00` claims to support
-        // already-authenticated unblocking, but the body still calls
-        // `concat(code(pukCode), ...)` and `code(null)` NPEs in Arrays.copyOf.
-        // Locking the *current* (buggy) behaviour: the call NPEs, no APDU
-        // is sent. A future fix should either accept null pukCode in `code()`
-        // or short-circuit the data assembly when pukCode is null.
+    public void unblockAndChangeCode_pin1_withoutPuk_isRefusedBeforeAnyApdu() {
+        // Thales.unblockAndChangeCode still cannot do the null-PUK form: its P1
+        // ternary `pukCode == null ? 0x02 : 0x00` offers already-authenticated
+        // unblocking, but the body builds `concat(code(pukCode), ...)` either
+        // way, so there is no code to pad. Fixing that needs a captured
+        // transcript of the P1=0x02 form to verify against. Until then the call
+        // at least fails in terms of the missing code, rather than dying inside
+        // Arrays.copyOf with a bare NullPointerException.
         CommandStubReader stub = new CommandStubReader();
         ThalesWithPace token = new ThalesWithPace(stub.build());
 
-        assertThrows(NullPointerException.class,
+        assertThrows(CodeFormatException.class,
                 () -> token.unblockAndChangeCode(null, CodeType.PIN1, "1234".getBytes()));
         assertThat(stub.captured).isEmpty();
     }

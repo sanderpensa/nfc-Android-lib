@@ -126,6 +126,36 @@ public final class IdemiaCodeManagementTest {
                 () -> token.changeCode(CodeType.PIN1, "0000".getBytes(), "1234".getBytes()));
     }
 
+    // -------- empty codes never reach the card --------
+
+    @Test
+    public void verifyCode_emptyPin_isRefusedWithoutSendingVerify() throws Exception {
+        // Padding an empty code produces twelve 0xFF bytes, which the card
+        // would compare and reject — spending one of the user's retries on a
+        // value nobody typed. The guard has to fire before the VERIFY leaves.
+        CommandStubReader stub = new CommandStubReader();
+        IdemiaWithPace token = new IdemiaWithPace(stub.build());
+
+        assertThrows(CodeFormatException.class,
+                () -> token.changeCode(CodeType.PIN1, new byte[0], "1234".getBytes()));
+
+        assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x24)).isTrue();
+    }
+
+    @Test
+    public void unblockAndChangeCode_emptyNewPin_isRefusedWithoutResettingTheCode() throws Exception {
+        // The dangerous one: RESET RETRY COUNTER would *store* the twelve
+        // filler bytes, leaving a PIN no keypad can reproduce and which only
+        // another unblock can clear.
+        CommandStubReader stub = new CommandStubReader();
+        IdemiaWithPace token = new IdemiaWithPace(stub.build());
+
+        assertThrows(CodeFormatException.class,
+                () -> token.unblockAndChangeCode("12345678".getBytes(), CodeType.PIN1, new byte[0]));
+
+        assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x2C)).isTrue();
+    }
+
     // -------- unblockAndChangeCode --------
 
     @Test

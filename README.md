@@ -365,6 +365,8 @@ private fun exceptionHandler(ex: SmartCardReaderException) {
         ...
     } else if (ex is CodeVerificationException) {
         ...
+    } else if (ex is CodeFormatException) {
+        ...
     } else if (ex is PaceTunnelException) {
         ...
     } else if (ex is IdCardException) {
@@ -393,12 +395,15 @@ private fun exceptionHandler(ex: SmartCardReaderException) {
   Treat it as "this card cannot do this" — e.g. a card personalised without a signing certificate — rather than as something a retry will fix.
 * **Line 6:** `ee.ria.DigiDoc.idcard.CodeVerificationException` – specific exception indicating that the PIN1 or PIN2 used for authorization was incorrect.
   The exception includes information on how many attempts remain before the PIN becomes locked.
-* **Line 8:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
+* **Line 8:** `ee.ria.DigiDoc.idcard.CodeFormatException` – thrown before anything is sent to the card when a PIN or PUK is empty, or longer than the twelve-byte code field.
+  Codes travel right-padded to twelve bytes, so an empty one would become twelve filler bytes: a well-formed command the card cannot tell apart from a real attempt, since the padding is applied host-side. On a verify that spends one of the user's retries; on a change or unblock the card **stores** those bytes, leaving a code no keypad can reproduce.
+  Only the field's own limits are checked — minimum lengths are card policy and differ by model, so validate those in your own UI before calling.
+* **Line 10:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
   Most likely, the issue is caused by an incorrect CAN code.
-* **Line 10:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
-* **Line 12:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
-* **Line 15:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
-* **Line 17:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
+* **Line 12:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
+* **Line 14:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
+* **Line 17:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
+* **Line 19:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
 
 ---
 

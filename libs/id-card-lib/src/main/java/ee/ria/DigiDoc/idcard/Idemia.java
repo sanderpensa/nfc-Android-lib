@@ -779,10 +779,9 @@ abstract class Idemia implements Token {
         reader.transmit(0x00, 0xA4, 0x04, 0x0C, new byte[] {(byte) 0xE8, 0x28, (byte) 0xBD, 0x08, 0x0F, (byte) 0xF2, 0x50, 0x4F, 0x54, 0x20, 0x41, 0x57, 0x50}, null);
     }
 
-    private static byte[] code(byte[] code) {
-        byte[] padded = Arrays.copyOf(code, 12);
-        Arrays.fill(padded, code.length, padded.length, (byte) 0xFF);
-        return padded;
+    /** IDEMIA pads the twelve-byte code field with {@code 0xFF}. */
+    private static byte[] code(byte[] code) throws CodeFormatException {
+        return Codes.padded(code, (byte) 0xFF);
     }
 
     /**

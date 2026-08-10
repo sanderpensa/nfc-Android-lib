@@ -724,7 +724,17 @@ regardless of which form you use.
 | PUK  | `0x02`    | `0x02`            | 8–12           | Unblock; verify after MAIN AID                               |
 
 All PIN values are right-padded with `0xFF` to **12 bytes** before
-transmission.
+transmission. That padding is applied host-side, which makes the field's
+own limits the caller's problem: **refuse a code shorter than one byte or
+longer than twelve before building the APDU.** An empty one pads to twelve
+filler bytes — a structurally perfect command the card cannot tell from a
+real attempt, so it compares, fails, and spends a retry; on `CHANGE`/`RESET`
+it *stores* those bytes as the new code, which no keypad can reproduce. An
+over-long one does not fit at all, and `CHANGE` sends two of these fields end
+to end, so it would shift the second past a boundary the card still expects.
+Minimum lengths beyond that are card policy and belong in the UI, not the
+library. (Android throws `CodeFormatException`; iOS throws
+`IdCardInternalError.invalidCodeFormat`.)
 
 ### 7.1 Verify PIN
 

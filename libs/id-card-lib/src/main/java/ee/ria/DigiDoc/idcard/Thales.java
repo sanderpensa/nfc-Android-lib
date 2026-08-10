@@ -27,7 +27,6 @@ import android.util.SparseArray;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -228,9 +227,8 @@ class Thales implements Token {
         reader.transmit(0x00, 0xA4, 0x04, 0x00, new byte[] {(byte)0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35}, null);
     }
 
-    private static byte[] code(byte[] code) {
-        byte[] padded = Arrays.copyOf(code, 12);
-        Arrays.fill(padded, code.length, padded.length, (byte) 0x00);
-        return padded;
+    /** Thales pads the twelve-byte code field with {@code 0x00}. */
+    private static byte[] code(byte[] code) throws CodeFormatException {
+        return Codes.padded(code, (byte) 0x00);
     }
 }
