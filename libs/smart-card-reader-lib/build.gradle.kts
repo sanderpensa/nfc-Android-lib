@@ -19,10 +19,6 @@ android {
     lint {
         lintConfig = file("../lint.xml")
     }
-
-    buildFeatures {
-        buildConfig = true
-    }
 }
 
 dependencies {
