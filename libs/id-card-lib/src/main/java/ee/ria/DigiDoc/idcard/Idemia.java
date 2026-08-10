@@ -144,7 +144,23 @@ abstract class Idemia implements Token {
      * path applies to — or a file id under one of the PKCS#15 applets,
      * selected with {@code 00 A4 02 0C} once its AID is current.
      */
-    record CertLocation(AppletContext context, byte[] path) {
+    static final class CertLocation {
+        private final AppletContext context;
+        private final byte[] path;
+
+        CertLocation(AppletContext context, byte[] path) {
+            this.context = context;
+            this.path = path;
+        }
+
+        AppletContext context() {
+            return context;
+        }
+
+        byte[] path() {
+            return path;
+        }
+
         @Override
         public String toString() {
             return context == AppletContext.MAIN
@@ -343,20 +359,32 @@ abstract class Idemia implements Token {
                 ? AppletContext.QSCD : AppletContext.OBERTHUR;
     }
 
-    /**
-     * Outcome of the FCI form of the cert read.
-     *
-     * @param certificate  the bytes, when the FCI bounded a real certificate;
-     *                     {@code null} otherwise.
-     * @param declaredSize the size the card declared, when it declared one too
-     *                     small to be a certificate. Non-null here is the
-     *                     card stating this file is empty, which is grounds to
-     *                     stop rather than read it — see
-     *                     {@link #readCertificateAt}. {@code null} means the
-     *                     FCI said nothing conclusive and the canonical read
-     *                     still has to be tried.
-     */
-    private record FciRead(byte[] certificate, Integer declaredSize) { }
+    /** Outcome of the FCI form of the cert read. */
+    private static final class FciRead {
+        private final byte[] certificate;
+        private final Integer declaredSize;
+
+        FciRead(byte[] certificate, Integer declaredSize) {
+            this.certificate = certificate;
+            this.declaredSize = declaredSize;
+        }
+
+        /** The bytes, when the FCI bounded a real certificate; {@code null} otherwise. */
+        byte[] certificate() {
+            return certificate;
+        }
+
+        /**
+         * The size the card declared, when it declared one too small to be a
+         * certificate. Non-null here is the card stating this file is empty,
+         * which is grounds to stop rather than read it — see
+         * {@link #readCertificateAt}. {@code null} means the FCI said nothing
+         * conclusive and the canonical read still has to be tried.
+         */
+        Integer declaredSize() {
+            return declaredSize;
+        }
+    }
 
     /**
      * SELECT the cert EF with {@code P2 = 0x04} to request the FCP template,
