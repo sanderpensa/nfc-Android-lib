@@ -4,11 +4,15 @@ import static com.google.common.truth.Truth.assertThat;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err6B00;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.okPadded;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.tagLost;
+
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
@@ -450,6 +454,42 @@ public final class LatviaIdemiaCertLookupReplayTest {
                         + " EF 3402 in OBERTHUR (no such file);"
                         + " EF adf13401 (declared empty by its FCI);"
                         + " the PKCS#15 certificate directory (named none)");
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * The same journey as above right up to the last step, where the card
+     * leaves the field instead of answering. That must not be reported as
+     * {@link CertificateNotFoundException}: "this card has no certificate"
+     * tells the user to give up on something a re-tap would fix.
+     *
+     * <p>The two misses before it are deliberately benign — {@code 6A 82} and a
+     * declared-empty FCI — because a card-level failure earlier on is
+     * remembered and rethrown in preference, which would mask the bug. This
+     * arrangement is the one case where nothing else stands in the way.
+     */
+    @Test
+    public void certificate_whenTheTagIsLostDuringThePkcs15Walk_reportsTheTransportFailure()
+            throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(SELECT_ALTERNATE_AUTH_EF, err(0x6A, 0x82))
+                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(SELECT_AUTH_CERT_FCI, okPadded(EMPTY_AUTH_CERT_FCI))
+                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(SELECT_EF_OD, tagLost())
+                // Re-selecting MAIN is attempted regardless and fails the same
+                // way; it stays silent so as not to replace what the caller is
+                // about to be told.
+                .expect(SELECT_MAIN_AID, tagLost())
+                .tunnel();
+
+        var thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                SmartCardReaderException.class,
+                () -> fixture.token.certificate(CertificateType.AUTHENTICATION));
+
+        assertThat(thrown).isNotInstanceOf(CertificateNotFoundException.class);
+        assertThat(thrown).hasCauseThat().isInstanceOf(IOException.class);
         fixture.assertAllConsumed();
     }
 

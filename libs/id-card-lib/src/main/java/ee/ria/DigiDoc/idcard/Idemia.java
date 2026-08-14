@@ -483,14 +483,21 @@ abstract class Idemia implements Token {
      * "Signature 1E" → {@code 34 1E}.
      *
      * <p>Returns {@code null} — leaving the caller to report that the card has
-     * no such certificate — when any step fails or the bytes read are not a
-     * certificate. Every failure is non-fatal by design: this runs only for
-     * cards that were already about to error out, so it must never turn a
-     * clear "no certificate" into an unrelated exception. Restoring the MAIN
-     * AID afterwards is {@link #certificate}'s job, so that a failure here can
-     * hand straight over without a wasted SELECT.
+     * no such certificate — when the card declines a step or the metadata does
+     * not parse. Those failures are non-fatal by design: this runs only for
+     * cards that were already about to error out, so an unfamiliar layout must
+     * never become an unrelated exception.
+     *
+     * <p>A failure of the connection itself is rethrown instead. It is not this
+     * card's layout being unknown, and swallowing it would have the caller
+     * report {@link CertificateNotFoundException} — that the card permanently
+     * holds no such certificate — for something a re-tap would fix.
+     *
+     * <p>Restoring the MAIN AID afterwards is {@link #certificate}'s job, so
+     * that either exit can hand straight over without a wasted SELECT.
      */
-    private byte[] readCertificateViaPkcs15(CertificateType type) {
+    private byte[] readCertificateViaPkcs15(CertificateType type)
+            throws SmartCardReaderException {
         AppletContext context = appletContextFor(type);
         try {
             byte[] fileId = pkcs15CertificateFiles.get(type);
@@ -524,6 +531,13 @@ abstract class Idemia implements Token {
                     type, certificate.length, Hex.toHexString(fileId), context), null);
             return certificate;
         } catch (Exception e) {
+            if (e instanceof SmartCardReaderException card && cardResponse(card) == null) {
+                // Not the card declining: the tag is gone, or SM has broken.
+                // Every other route to the certificate would fail the same way,
+                // so this is the answer rather than one more thing to fall back
+                // from.
+                throw card;
+            }
             LoggingUtil.Companion.debugLog(TAG, String.format(
                     "certificate(%s): PKCS#15 certificate lookup in %s failed (%s)",
                     type, context, e), null);

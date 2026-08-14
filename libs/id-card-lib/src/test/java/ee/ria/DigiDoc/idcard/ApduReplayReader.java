@@ -7,11 +7,13 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
 import ee.ria.DigiDoc.smartcardreader.ApduResponseException;
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 import ee.ria.DigiDoc.smartcardreader.nfc.NfcSmartCardReader;
 
 import org.bouncycastle.util.encoders.Hex;
 import org.mockito.MockMakers;
 
+import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -119,11 +121,21 @@ final class ApduReplayReader {
         return new Outcome(null, new ApduResponseException((byte) sw1, (byte) sw2));
     }
 
+    /**
+     * The tag left the field mid-exchange. Not a status word and so not an
+     * answer from the card at all, which is the distinction code under test is
+     * expected to make: this is the shape {@code readUntilEof} produces when
+     * the transport throws.
+     */
+    static Outcome tagLost() {
+        return new Outcome(null, new SmartCardReaderException(new IOException("Tag was lost")));
+    }
+
     /** Outcome of a single APDU call — either bytes or an exception, never both. */
     static final class Outcome {
         final byte[] payload;
-        final ApduResponseException error;
-        Outcome(byte[] payload, ApduResponseException error) {
+        final SmartCardReaderException error;
+        Outcome(byte[] payload, SmartCardReaderException error) {
             this.payload = payload;
             this.error = error;
         }
