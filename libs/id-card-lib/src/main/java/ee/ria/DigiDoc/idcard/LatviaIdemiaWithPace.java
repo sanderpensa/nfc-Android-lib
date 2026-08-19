@@ -109,7 +109,8 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
     // and no ATS tells the two apart. Latvian cards therefore read their algorithm
     // and key references from the card (resolveSecurityEnvironmentFromCard above)
     // and raise SecurityEnvironmentException rather than assume. The measured
-    // values, with the cards they came from, are in CARD_VARIANTS.md §4.3 and §5.
+    // values, with the cards they came from, are in the capture notes kept with
+    // the device logs — outside this repository, and deliberately not here.
 
     /**
      * Read personal data from the auth certificate subject and EF 0x5001 (personal code).

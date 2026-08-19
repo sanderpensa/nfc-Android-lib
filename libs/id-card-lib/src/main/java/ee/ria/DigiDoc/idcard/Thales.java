@@ -80,8 +80,13 @@ class Thales implements Token {
         // fallback. Known gap, not yet a problem — no Thales personalisation has
         // been seen that keeps its certificates elsewhere. It is the same shape as
         // the LV bug that motivated the layered lookup, so if a Thales card ever
-        // turns up with a placeholder here, this is the place to fix. See
-        // CARD_VARIANTS.md §8.2.
+        // turns up with a placeholder here, this is the place to fix.
+        //
+        // Left alone deliberately rather than by omission: applying the IDEMIA
+        // mechanism here would put the most intricate code in the lookup — DER
+        // validation, the fallback ladder, the PKCS#15 walk — on the critical path
+        // for a card family that has never needed it, where today a bug in any of
+        // it cannot break a working tap.
         return readFile(0x08, CERT_MAP.get(type));
     }
 
@@ -179,12 +184,12 @@ class Thales implements Token {
      * Stage a security environment.
      *
      * <p>Thales stays on this rather than the {@code SecurityEnvironment}
-     * resolution the IDEMIA cards use, deliberately — see {@code CARD_VARIANTS.md}
-     * §8.1. The algorithm reference here is derived from the digest length by the
-     * caller, so it already adapts to the hash in hand; resolution answers one
-     * algorithm per key and operation, which would send the SHA-384 reference for
-     * a SHA-256 digest. {@code algo} is also allowed to be {@code null} — decipher
-     * sends no {@code 80} object at all, which that type cannot express.
+     * resolution the IDEMIA cards use, deliberately. The algorithm reference here is
+     * derived from the digest length by the caller, so it already adapts to the hash
+     * in hand; resolution answers one algorithm per key and operation, which would
+     * send the SHA-384 reference for a SHA-256 digest. {@code algo} is also allowed
+     * to be {@code null} — decipher sends no {@code 80} object at all, which that
+     * type cannot express.
      */
     private void setSecEnv(byte mode, byte[] algo, byte keyRef) throws SmartCardReaderException {
         byte[] data = algo != null ? TLV.encodeTLV(0x80, algo) : new byte[] {};

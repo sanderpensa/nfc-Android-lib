@@ -62,9 +62,12 @@ import java.util.Map;
  * <p>Two encodings have to be tolerated, both observed:
  *
  * <ul>
- *   <li>{@code algRef} is one byte on the 2026 Latvian cards ({@code 0x54}) and
- *       four on the 2020 one ({@code FF 15 08 00}), the form documented for
- *       Estonian IDEMIA — so it is kept as bytes, never an int.</li>
+ *   <li>{@code algRef} is one byte on some rows and four on others, and which is
+ *       which is a property of the row rather than of the card: the 2020 card's
+ *       table carries one byte on its six RSA rows ({@code 0x42}, {@code 0x02}) and
+ *       four on its seven EC rows ({@code FF 20 08 00} onwards, the form documented
+ *       for Estonian IDEMIA), while the 2026 EC card's table is one byte throughout.
+ *       So it is kept as bytes, never an int, and never inferred from the card.</li>
  *   <li>Table rows are numbered in BCD ({@code 01}…{@code 09}, {@code 10}…) while
  *       the key directory references them in binary ({@code 07}…{@code 0d}), so
  *       rows are indexed under both readings.</li>

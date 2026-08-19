@@ -863,8 +863,12 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
      * here: their values differ between personalisations that share an ATS, so a
      * constant would be wrong for some of them and
      * {@link SecurityEnvironmentException} is raised instead. The Latvian values
-     * measured so far are recorded in {@code CARD_VARIANTS.md} §4.3 and §5, not in
-     * code, precisely so nobody is tempted to apply one to the wrong card.
+     * measured so far are recorded with the device captures they came from, kept
+     * outside this repository — not in code, precisely so nobody is tempted to
+     * apply one to the wrong card. What matters here is the rule they establish:
+     * two Latvian cards sharing the "SeID" ATS use {@code 0x82}/{@code 0x9E} and
+     * {@code 0x81}/{@code 0x9F}, and one of them is RSA, so no constant is right
+     * for all of them.
      *
      * <p>Declares {@link SecurityEnvironmentException} without throwing it, so that a
      * subclass with no measured constants can refuse here rather than inherit
@@ -967,17 +971,35 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
      * has not been already. Leaves the card on the MAIN AID, since this is called
      * between reads rather than inside an operation.
      */
-    private SignatureAlgorithm cardNamedAlgorithm(SigningOperation operation) {
+    private SignatureAlgorithm cardNamedAlgorithm(SigningOperation operation)
+            throws SmartCardReaderException {
         try {
             selectAppletContext(operation.context);
-            SignatureAlgorithm named = securityEnvironment(operation).namedAlgorithm();
-            selectMainAid();
-            return named;
-        } catch (Exception e) {
+            return securityEnvironment(operation).namedAlgorithm();
+        } catch (SmartCardReaderException e) {
+            if (cardResponse(e) == null) {
+                // Not the card declining: the tag is gone, or SM has broken. Asking
+                // what a key signs with is the first thing a caller does, so
+                // answering "the card named no hash" here would hand back RS256 and
+                // let the real failure surface later as something else entirely.
+                throw e;
+            }
             LoggingUtil.Companion.debugLog(TAG, String.format(
                     "could not ask the card which algorithm its %s key uses (%s)",
                     operation, e), null);
             return null;
+        } finally {
+            // In a finally because the javadoc promises it: the card is left on
+            // MAIN whether the question was answered, declined, or cut short. Its
+            // own failure is swallowed for the same reason as everywhere else —
+            // it must not replace the error being reported.
+            try {
+                selectMainAid();
+            } catch (Exception e) {
+                LoggingUtil.Companion.debugLog(TAG, String.format(
+                        "could not re-select MAIN AID after asking about the %s key (%s)",
+                        operation, e), null);
+            }
         }
     }
 
@@ -995,7 +1017,7 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
 
         // Checked here and not in calculateSignature: authentication callers have
         // already read the certificate, signing callers have not, and reading one
-        // there costs about a second. See CARD_VARIANTS.md §8.4.
+        // there costs about a second.
         verifySignature(SigningOperation.AUTHENTICATE, environment, input, signature);
         return signature;
     }

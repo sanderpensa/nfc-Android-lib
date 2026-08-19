@@ -6,6 +6,8 @@ import static ee.ria.DigiDoc.idcard.ApduReplayReader.bytes;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err6B00;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
 
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
+
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.Test;
@@ -97,6 +99,38 @@ public final class SignatureAlgorithmPerKeyTest {
 
         assertThat(fixture.token.signatureAlgorithm(
                 CertificateType.SIGNING, ecCertificate())).isEqualTo(SignatureAlgorithm.ES384);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * A tag that leaves the field while the card is being asked about a key is
+     * reported as a lost tag, not answered with the RSA default.
+     *
+     * <p>This is the first thing a caller does with a certificate, so swallowing the
+     * failure here would hand back RS256 and let the real problem surface later as
+     * something else — a signature that will not verify, or a refusal three APDUs on.
+     * The card is still put back on MAIN on the way out, which the fixture scripts
+     * as failing too, since the tag really is gone.
+     */
+    @Test
+    public void aTagLostWhileAskingAboutAKeyIsReportedAsATagLoss() throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                .with(r -> {
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
+                    r.expect("00a4020c025032", ok());
+                    r.expect("00b0000000", ApduReplayReader.tagLost());
+                    // Both restores are attempted and both fail with the tag gone.
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ApduReplayReader.tagLost());
+                    r.expect(TestApdus.SEL_MAIN_AID, ApduReplayReader.tagLost());
+                })
+                .tunnel();
+
+        SmartCardReaderException thrown = assertThrows(SmartCardReaderException.class,
+                () -> fixture.token.signatureAlgorithm(
+                        CertificateType.AUTHENTICATION, rsaCertificate()));
+
+        assertThat(thrown).isNotInstanceOf(SignatureAlgorithmException.class);
+        assertThat(thrown).hasCauseThat().hasMessageThat().contains("Tag was lost");
         fixture.assertAllConsumed();
     }
 

@@ -40,7 +40,7 @@ import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
  *
  * <p>Estonian cards never reach this: their layout is documented and one pair of
  * key references has served every marking in the field, so they use the measured
- * constants by design. See {@code CARD_VARIANTS.md} §8.1.
+ * constants by design.
  */
 public class SecurityEnvironmentException extends SmartCardReaderException {
 

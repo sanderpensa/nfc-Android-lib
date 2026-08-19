@@ -337,7 +337,7 @@ abstract class Idemia implements Token {
      * failures arrive raw; read failures come wrapped by
      * {@link #readUntilEof}, hence the cause check.
      */
-    private static ApduResponseException cardResponse(SmartCardReaderException e) {
+    static ApduResponseException cardResponse(SmartCardReaderException e) {
         if (e instanceof ApduResponseException apdu) {
             return apdu;
         }
@@ -390,11 +390,6 @@ abstract class Idemia implements Token {
     }
 
     /**
-     * Leave the card on the MAIN AID, because that is where every other Token
-     * method expects to find it. Failure to do so is logged, never thrown: it
-     * must not replace whatever the caller is about to be told.
-     */
-    /**
      * Puts the applet back after a metadata walk, tolerating its own failure.
      *
      * <p>The counterpart of {@link #restoreMainAid} for the resolution walk, and
@@ -411,6 +406,11 @@ abstract class Idemia implements Token {
         }
     }
 
+    /**
+     * Leave the card on the MAIN AID, because that is where every other Token
+     * method expects to find it. Failure to do so is logged, never thrown: it
+     * must not replace whatever the caller is about to be told.
+     */
     private void restoreMainAid(CertificateType type) {
         try {
             selectMainAid();
@@ -497,15 +497,19 @@ abstract class Idemia implements Token {
      * <p>The machinery is model-independent and works on Estonian cards — an EE
      * capture on 2026-08-18 resolved from metadata and reproduced both constants
      * exactly — so this is one boolean if an unknown Estonian personalisation ever
-     * appears. See {@code CARD_VARIANTS.md} §8.
+     * appears.
      */
     protected boolean resolveSecurityEnvironmentFromCard() {
         return false;
     }
 
     /**
-     * The card's own answer, or {@code null} when it does not give one. Never
-     * throws: every failure here is a reason to fall back, not to fail.
+     * The card's own answer, or {@code null} when it does not give one.
+     *
+     * <p>A card that declines — no EF.TokenInfo, no key directory, nothing usable
+     * in it — yields {@code null}, which the caller turns into a refusal. A failure
+     * that is not the card declining is rethrown; see the comment on the catch
+     * below for why the two must not be confused.
      */
     private SecurityEnvironment securityEnvironmentFromCard(SigningOperation operation)
             throws SmartCardReaderException {
@@ -584,7 +588,9 @@ abstract class Idemia implements Token {
     private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable(
             AppletContext context) throws SmartCardReaderException {
         Map<Integer, Pkcs15SecurityEnvironment.Algorithm> cached = algorithmTables.get(context);
-        if (cached != null && !cached.isEmpty()) {
+        if (cached != null) {
+            // Only non-empty tables are ever put here — see below — so a hit is an
+            // answer rather than a card that was asked and said nothing.
             return cached;
         }
         Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table =

@@ -37,10 +37,10 @@ enum class CodeField(val label: String, val min: Int, val max: Int) {
  * case an inline error is shown on the field and focus moved to it, so the
  * caller should simply return.
  *
- * <p>Checking here matters more than it looks. An unchecked empty field
- * reaches {@code Idemia.code()}, which pads whatever it is given to twelve
- * bytes with {@code 0xFF} — so an empty box is presented to the card as a
- * PIN of twelve {@code 0xFF} bytes. The card compares it, rejects it, and
+ * Checking here matters more than it looks. An unchecked empty field
+ * reaches `Idemia.code()`, which pads whatever it is given to twelve
+ * bytes with `0xFF` — so an empty box is presented to the card as a
+ * PIN of twelve `0xFF` bytes. The card compares it, rejects it, and
  * decrements the retry counter against a value the user never typed. On the
  * unblock screen the same input *sets* the new code, so an empty box can
  * leave the card holding a PIN that no keypad entry can ever reproduce,

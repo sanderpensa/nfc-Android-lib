@@ -43,8 +43,14 @@ import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
  */
 public class CertificateNotFoundException extends SmartCardReaderException {
 
-    /** The certificate that was asked for. */
-    private final transient CertificateType type;
+    /**
+     * The certificate that was asked for.
+     *
+     * <p>Not {@code transient}: an enum constant serializes as its name and comes
+     * back as the same constant, so marking it would cost {@link #certificateType()}
+     * its answer after a round trip and buy nothing.
+     */
+    private final CertificateType type;
 
     CertificateNotFoundException(CertificateType type, List<String> searched) {
         super(String.format("No %s certificate on card. Searched: %s",

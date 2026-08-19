@@ -52,7 +52,7 @@ import java.util.Arrays;
  * <p><b>What it does not cover.</b> Only authentication. {@code calculateSignature}
  * is not given a certificate and reading one would cost 0.9–1.3 s — the signing
  * certificate is the largest file on the card — which is more than the resolution it
- * would be guarding. See {@code CARD_VARIANTS.md} §8.4.
+ * would be guarding.
  *
  * <p>This class reports and does not decide. Whether a mismatch is fatal depends on
  * where the environment came from, which is the caller's knowledge: see

@@ -909,7 +909,7 @@ wrong". The debug log names which step found it, or why each one gave up.
 
 ---
 
-## 9. Authentication (PIN1 → key 0x82)
+## 9. Authentication (PIN1 → key `0x82` *on this capture's card*)
 
 ```
 SELECT Oberthur AID
@@ -961,7 +961,7 @@ INTERNAL AUTHENTICATE:
 
 ---
 
-## 10. Signing (PIN2 → key 0x9E)
+## 10. Signing (PIN2 → key `0x9E` *on this capture's card*)
 
 ```
 SELECT QSCD AID
@@ -1011,7 +1011,7 @@ PSO COMPUTE DIGITAL SIGNATURE:
 
 ---
 
-## 11. Decryption (PIN1 → key 0x82)
+## 11. Decryption (PIN1 → key `0x82` *on this capture's card*)
 
 > ⚠ **Unverified path.** Included for completeness; **not exercised by
 > the reference tests on this branch**. The byte-level APDU sequence
@@ -1193,11 +1193,27 @@ are out of scope for the parser.
 
 ---
 
-## 13. Optional: dynamic key-reference discovery (PrKDF)
+## 13. Dynamic key-reference discovery (PrKDF)
 
-The current LV implementation hard-codes `authKeyRef = 0x82` and
-`signKeyRef = 0x9E`, so this section is reference material for porters
-faced with a card variant whose key slots are unknown.
+> **Superseded heading — this is no longer optional.** It used to read
+> "Optional", on the basis that the implementation hard-coded
+> `authKeyRef = 0x82` and `signKeyRef = 0x9E`. It no longer does: those
+> constants were deliberately removed, `resolveSecurityEnvironmentFromCard()`
+> returns `true` for Latvian cards, and `measuredSecurityEnvironment` throws
+> rather than offering them as a fallback. Five personalisations are on record
+> and no static pair of key references is right for all of them — two cards
+> sharing the "SeID" ATS use `0x82`/`0x9E` and `0x81`/`0x9F` respectively.
+>
+> So a port that treats this section as optional will work on one Latvian card
+> and produce signatures that verify nowhere on another. The card is asked, or
+> the operation is refused; there is no third path. The same is true of the
+> *algorithm* reference, which is read from the same metadata — see §9's
+> superseded callout.
+
+What follows describes **half** the walk — how to find the key reference. The
+algorithm reference comes from a second file, EF.TokenInfo, and §13.1 covers it.
+A port that reads only this half has the key and still has to invent the
+algorithm reference, which is the failure this section exists to prevent.
 
 > **This is a deliberately minimal walker, not a robust PKCS#15 parser.**
 > It assumes a single conformant PrKDF, takes the **first** matching tag
@@ -1208,9 +1224,10 @@ faced with a card variant whose key slots are unknown.
 > against your target card before relying on it.
 
 > **Per-applet PrKDF.** The auth and sign keys on this card live in
-> **different applet contexts**: the auth key (`0x82`) is registered in
-> the Oberthur AWP applet's PrKDF, the sign key (`0x9E`) in the QSCD
-> applet's PrKDF. Each applet has its own EF.OD → PrKDF chain. That's
+> **different applet contexts**: the auth key (`0x82` *on this capture's
+> card* — another personalisation uses `0x81`) is registered in the
+> Oberthur AWP applet's PrKDF, the sign key (`0x9E` here, `0x9F` there) in
+> the QSCD applet's PrKDF. Each applet has its own EF.OD → PrKDF chain. That's
 > why the SELECT step below is parameterised — Oberthur for auth-key
 > discovery, QSCD for sign-key discovery — and why running the walk
 > under the wrong AID returns the other key (or no key at all).
@@ -1243,6 +1260,103 @@ is `CommonKeyAttributes`. Inside that SEQUENCE, find an INTEGER (`02`):
 Use the first key ref found per AID context (auth in Oberthur, sign in
 QSCD).
 
+### 13.1 The algorithm table (EF.TokenInfo, `50 32`)
+
+The key reference alone is not enough to stage an operation. `MSE:SET` also
+carries an algorithm reference — the payload of the `80` object — and it varies
+between personalisations of this model just as the key reference does.
+
+**Its width varies by row, not by card.** The 2020 card's table carries both: its
+six RSA rows use one byte (`12`, `42`, `42`, `42`, `02`, `1a`) and its seven EC
+rows four (`FF 20 08 00` … `FF 30 04 00`). The 2026 EC card's table is one byte
+throughout, while another SeID-marked EC card cites the four-byte form with the
+same key references. So neither the card nor the key type predicts the width —
+only the row you actually selected does. Take the bytes as they come and let the
+`80` object's length byte follow them.
+
+It is read from EF.TokenInfo, under the same applet as the key:
+
+```
+00 A4 02 0C 02 50 32       ← SELECT EF.TokenInfo (in the applet that owns the key)
+00 B0 00 00 00             ← READ BINARY, chunked as §6; 542-581 bytes observed
+```
+
+TokenInfo is a `SEQUENCE`. The table is its context tag **`[2]` (`A2`)**, a
+`SEQUENCE OF AlgorithmInfo`:
+
+```
+AlgorithmInfo ::= SEQUENCE {
+    reference           INTEGER,            -- the row number a key cites
+    algorithm           INTEGER,
+    parameters          NULL,               -- or absent
+    supportedOperations BIT STRING,
+    objId               OBJECT IDENTIFIER,
+    algRef              INTEGER             -- what goes in the MSE:SET 80 object
+}
+```
+
+Three things about reading a row, each of which has bitten an implementation:
+
+1. **It is the *last* INTEGER that goes on the wire, not the first.** Collect the
+   row's INTEGERs in order: the first is the row number, the last is `algRef`.
+   Do not index positionally beyond those two — rows differ in which optional
+   fields they carry.
+2. **`algRef` is bytes, not a number.** One byte on some rows, four on others,
+   and the `80` object's length byte must match what you send
+   (`80 01 04` against `80 04 FF 20 08 00`).
+3. **`supportedOperations` is a BIT STRING, most significant bit first.**
+   compute-signature is `0x40`, decipher `0x04`, derive-key `0x01`. A row that
+   carries the field with no bits set supports nothing; a row that omits the
+   field entirely has said nothing and is usable. An EC key does key agreement
+   rather than deciphering and advertises **derive-key alone**, so a decrypt path
+   that requires `decipher` will never resolve on an EC card.
+
+**`objId` decides who builds the PKCS#1 encoding**, which matters only for RSA:
+
+| OID | Meaning |
+|---|---|
+| `1.2.840.113549.1.1.1` (`rsaEncryption`) | the card signs exactly what it is handed — **you** must wrap the digest in a `DigestInfo` |
+| `1.2.840.113549.1.1.11` (`sha256WithRSAEncryption`) | the card builds the encoding itself — send the **bare** digest |
+
+Send the wrong one and the signature verifies nowhere: a doubly-wrapped
+structure, or a raw modular exponentiation. A row naming a hash you do not
+implement must be **skipped**, not approximated — the tables seen carry
+`sha1WithRSAEncryption` at row 1.
+
+**Linking a key to its rows.** Inside the PrKDF entry's `CommonKeyAttributes`
+(§13's walk), the `[1]` (`A1`) whose children are *all* INTEGERs is the list of
+table rows that key may use. The INTEGER immediately before it is the key
+reference. So: take the key, take its first listed row that supports the
+operation you want, and use that row's `algRef`.
+
+**Row numbering is not consistent between the two files.** EF.TokenInfo numbers
+its rows in BCD — `01`…`09`, `10`, `11`, `12`, `13` — while the key directory
+cites the same rows in binary, `07`…`0d`. Index every row under both readings,
+preferring the value as written where the two collide. A parser that honours only
+one reading finds no row for the key and falls back to guessing.
+
+**Worked example, the 2020 RSA card.** Its authentication key `0x81` cites a row
+whose `objId` is plain `rsaEncryption` and whose `algRef` is `0x02` → send
+`80 01 02 84 01 81`, and build the `DigestInfo` yourself. Its signing key `0x9F`
+cites a row naming `sha256WithRSAEncryption` with `algRef` `0x42` → send
+`80 01 42 84 01 9F` and the bare 32-byte digest. Both applets publish their own
+EF.TokenInfo, and they are not the same file (563 bytes against 581), so read the
+table under the applet whose key you are about to use.
+
+> **`algRef` does not identify the hash, and this card proves it.** On both of its
+> tables, rows 2, 3 and 4 — `sha256WithRSAEncryption`, `sha384WithRSAEncryption`
+> and `sha512WithRSAEncryption` — all carry the *same* `algRef` of `0x42`. A key
+> citing row 3 therefore looks like RS384 by its OID while the card is sent the
+> byte that also means SHA-256, and the signature comes back encoded over a hash
+> nobody asked for.
+>
+> Nothing in the walk can catch that: the metadata is internally consistent, the
+> card answers `90 00`, and the signature is well formed. The only local check
+> that catches it is verifying the returned signature against the certificate of
+> the key that made it, which costs microseconds once the certificate has been
+> read. Do it for authentication at least — that is the operation where the
+> certificate is already in hand.
+
 ---
 
 ## 14. End-to-end session sketch
@@ -1255,7 +1369,12 @@ A complete "card-info + sign" session, with literal step ordering:
 3.  PACE handshake using user-entered CAN    (§4)
 4.  Now SM is on; every following APDU is wrapped per §5.
 5.  Read auth cert: SELECT MAIN, SELECT path AD F1 34 01, READ BINARY chunks.
+        AD F1 34 01 is this capture's card. On a "SeID" personalisation both
+        EFs hold a 1-byte placeholder and the real certificates are one file
+        id over — see §8.1. Validate what you read parses as X.509 rather
+        than trusting the path.
 6.  Read sign cert: SELECT MAIN, SELECT path AD F2 34 1F, READ BINARY chunks.
+        Same caveat as step 5.
 7.  Read personal code: SELECT DF 5000, SELECT EF 5001, single-shot
     READ BINARY (~12 bytes); strip trailing 0xFF and decode UTF-8.
     See §12.1 — the single-shot read assumes the file fits in one

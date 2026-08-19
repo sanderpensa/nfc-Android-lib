@@ -132,7 +132,7 @@ public interface TokenWithPace extends Token {
         // startup, because captures are whole-app logcat started mid-session — a
         // banner from before the capture window is a banner nobody has. On this
         // line it cannot be separated from the card it describes, including in an
-        // excerpt pasted into CARD_VARIANTS.md.
+        // excerpt pasted into a variants note.
         LoggingUtil.Companion.debugLog(TAG, String.format(
                 "card: %s (%s) -> %s [id-card-lib %s]", marking(atr), detected,
                 token.getClass().getSimpleName(), IdCardLibrary.version()), null);
