@@ -1308,13 +1308,18 @@ abstract class Idemia implements Token {
         // relying on the caller leaving MAIN active — otherwise calls composed after
         // codeRetryCounter(PIN2)/calculateSignature/etc. would silently fail with a
         // "wrong PUK" error.
+        // Shaped before the PUK is verified. Doing it inside the transmit below
+        // would let a malformed new code raise after a VERIFY had already gone
+        // out — harmless in itself, but CodeFormatException promises that none
+        // does, and the promise is worth more than the line it costs.
+        byte[] newCodeField = code(newCode);
         selectMainAid();
         verifyCode(CodeType.PUK, pukCode);
         if (type.equals(CodeType.PIN2)) {
             selectQSCDAid();
         }
         try {
-            reader.transmit(0x00, 0x2C, 0x02, Objects.requireNonNull(VERIFY_PIN_MAP.get(type)), code(newCode), null);
+            reader.transmit(0x00, 0x2C, 0x02, Objects.requireNonNull(VERIFY_PIN_MAP.get(type)), newCodeField, null);
         } catch (ApduResponseException e) {
             handleApduResponseException(CodeType.PUK, e);
         }

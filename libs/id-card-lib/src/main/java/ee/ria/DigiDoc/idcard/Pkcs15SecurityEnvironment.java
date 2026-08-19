@@ -270,6 +270,9 @@ final class Pkcs15SecurityEnvironment {
             }
             // {reference, algorithm, parameters, supportedOperations, objId, algRef}
             // — it is the last integer that goes on the wire, not the first.
+            // algRef is OPTIONAL in the schema, so a row that omitted it while
+            // carrying parameters would offer parameters here instead. No card has
+            // done that; every row seen either ends in algRef or is unusable anyway.
             if (integers.size() < 3) {
                 continue;
             }
@@ -343,7 +346,7 @@ final class Pkcs15SecurityEnvironment {
         Integer sizeBits = null;
         for (Field field : fieldsOf(body)) {
             if (field.tag == TAG_CONTEXT_1 && !onlyIntegers(field.value)) {
-                List<Integer> integers = integersIn(field.value);
+                List<Integer> integers = integersIn(field.value, MAX_DEPTH);
                 if (!integers.isEmpty()) {
                     sizeBits = integers.get(integers.size() - 1);
                 }
@@ -394,20 +397,42 @@ final class Pkcs15SecurityEnvironment {
         return fields;
     }
 
+    /**
+     * How deep the walkers here follow constructed tags.
+     *
+     * <p>Every captured file sits between three and six deep, so this is several
+     * times more than any card has needed. It exists because the recursion is
+     * otherwise bounded only by the length of the read: a file of nested
+     * containers about twelve kilobytes long overflows the stack on a thread with
+     * a 512 KB one, and {@code StackOverflowError} is an {@link Error} — it would
+     * pass the {@code catch (Exception)} that makes an unreadable file a card that
+     * cannot sign, rather than an application that stops. No card has produced
+     * anything remotely like it; this is here so that one could not.
+     *
+     * <p>{@link #integersIn} is bounded by the same number for the same reason:
+     * capping only one of the two walkers leaves the hazard reachable through
+     * the other.
+     */
+    private static final int MAX_DEPTH = 32;
+
     /** Every field at any depth, outermost first. */
     static List<Field> allFields(byte[] data) {
         List<Field> all = new ArrayList<>();
+        collectFields(data, MAX_DEPTH, all);
+        return all;
+    }
+
+    private static void collectFields(byte[] data, int remainingDepth, List<Field> into) {
         for (Field field : fieldsOf(data)) {
-            all.add(field);
+            into.add(field);
             // Bit 6 is DER's constructed flag, so this covers SEQUENCE, SET and
             // every [n] container without enumerating them. The previous test
             // (tag & 0xA0) == 0xA0 also matched private-class tags and missed the
             // application-class range; no captured card exercised the difference.
-            if ((field.tag & 0x20) != 0) {
-                all.addAll(allFields(field.value));
+            if ((field.tag & 0x20) != 0 && remainingDepth > 1) {
+                collectFields(field.value, remainingDepth - 1, into);
             }
         }
-        return all;
     }
 
     static Field findField(byte[] data, int tag) {
@@ -419,13 +444,14 @@ final class Pkcs15SecurityEnvironment {
         return null;
     }
 
-    private static List<Integer> integersIn(byte[] data) {
+    private static List<Integer> integersIn(byte[] data, int remainingDepth) {
         List<Integer> integers = new ArrayList<>();
         for (Field field : fieldsOf(data)) {
             if (field.tag == TAG_INTEGER) {
                 integers.add(unsigned(field.value));
-            } else if (field.tag == TAG_SEQUENCE || field.tag == TAG_CONTEXT_1) {
-                integers.addAll(integersIn(field.value));
+            } else if ((field.tag == TAG_SEQUENCE || field.tag == TAG_CONTEXT_1)
+                    && remainingDepth > 1) {
+                integers.addAll(integersIn(field.value, remainingDepth - 1));
             }
         }
         return integers;

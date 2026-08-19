@@ -147,6 +147,12 @@ public final class IdemiaCodeManagementTest {
         // The dangerous one: RESET RETRY COUNTER would *store* the twelve
         // filler bytes, leaving a PIN no keypad can reproduce and which only
         // another unblock can clear.
+        //
+        // The PUK VERIFY must not go out either. It costs no retry, since a
+        // correct PUK simply succeeds — but CodeFormatException documents that no
+        // VERIFY, CHANGE or UNBLOCK leaves for a code this malformed, and a card
+        // is entitled to be asked nothing on the strength of a code the library
+        // has already decided it will not use.
         CommandStubReader stub = new CommandStubReader();
         IdemiaWithPace token = new IdemiaWithPace(stub.build());
 
@@ -154,6 +160,7 @@ public final class IdemiaCodeManagementTest {
                 () -> token.unblockAndChangeCode("12345678".getBytes(), CodeType.PIN1, new byte[0]));
 
         assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x2C)).isTrue();
+        assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x20)).isTrue();
     }
 
     // -------- unblockAndChangeCode --------

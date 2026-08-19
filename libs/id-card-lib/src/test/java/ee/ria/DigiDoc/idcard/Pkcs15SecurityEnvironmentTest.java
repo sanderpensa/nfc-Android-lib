@@ -280,6 +280,137 @@ public final class Pkcs15SecurityEnvironmentTest {
         return keys.get(0);
     }
 
+    // ---- a file that nests further than any card has ----
+
+    /**
+     * A pathologically nested file is walked to a fixed depth and no further.
+     *
+     * <p>The walk is otherwise bounded only by how much was read, and nothing
+     * bounds that: about twelve kilobytes of nested containers overflows the stack
+     * on a thread with a 512 KB one. That matters because {@code
+     * StackOverflowError} is an {@link Error}, so it would pass the {@code catch
+     * (Exception)} that turns an unreadable file into a card that cannot sign —
+     * and pass the consumer's, and the demo application's, and take the NFC
+     * callback thread with it.
+     *
+     * <p>Nothing on record comes close: every captured file is three to six deep.
+     * The depth this pins is a ceiling, not a shape any card has.
+     */
+    @Test
+    public void aFileNestedFurtherThanAnyCardIsWalkedToTheCapAndNoFurther() {
+        byte[] deep = nested(4000);
+
+        List<Pkcs15SecurityEnvironment.Field> fields =
+                Pkcs15SecurityEnvironment.allFields(deep);
+
+        // One field per level followed, and the walk stops rather than dying.
+        assertThat(fields).hasSize(32);
+    }
+
+    /** Real files stay well inside the cap, so the walk still sees all of them. */
+    @Test
+    public void everyCapturedFileIsNowhereNearTheCap() {
+        for (String file : new String[] {
+                LvCardMetadata.TOKEN_INFO, LvCardMetadata.OBERTHUR_EF_OD,
+                LvCardMetadata.AUTH_PRKD, LvCardMetadata.QSCD_EF_OD, LvCardMetadata.SIGN_PRKD,
+                RsaCardMetadata.TOKEN_INFO_OBERTHUR, RsaCardMetadata.TOKEN_INFO_QSCD,
+                RsaCardMetadata.AUTH_EF_OD, RsaCardMetadata.AUTH_PRKD,
+                RsaCardMetadata.QSCD_EF_OD, RsaCardMetadata.SIGN_PRKD}) {
+            assertThat(depthOf(bytes(file))).isAtMost(8);
+        }
+    }
+
+    /**
+     * The key-size walk stops at the same depth, and a card is still read.
+     *
+     * <p>Capping {@link Pkcs15SecurityEnvironment#allFields} alone left this
+     * reachable: {@code keys()} descends into a {@code [1]} whose children are not
+     * all integers, and that walk had no cap. The guard in front of it inspects
+     * only immediate children, so a {@code [1]} holding one nested SEQUENCE goes
+     * straight past. Measured before the cap: 3,000 levels overflowed a 512 KB
+     * stack through this path, with {@code allFields} already bounded.
+     *
+     * <p>What the card gets is a key it can still use — only the size, which is
+     * read by nothing but the debug line, goes unresolved.
+     */
+    @Test
+    public void aKeyNestedFurtherThanTheCapIsStillReadButItsSizeIsNot() {
+        List<Pkcs15SecurityEnvironment.Key> keys =
+                Pkcs15SecurityEnvironment.keys(privateKeyDirectoryNested(4000));
+
+        assertThat(keys).hasSize(1);
+        assertThat(keys.get(0).sizeBits).isNull();
+    }
+
+    /** The same shape within the cap still resolves the size, so the cap is the only difference. */
+    @Test
+    public void aKeyNestedWithinTheCapStillResolvesItsSize() {
+        List<Pkcs15SecurityEnvironment.Key> keys =
+                Pkcs15SecurityEnvironment.keys(privateKeyDirectoryNested(4));
+
+        assertThat(keys).hasSize(1);
+        assertThat(keys.get(0).sizeBits).isEqualTo(2048);
+    }
+
+    /**
+     * One PrKD entry whose {@code [1]} holds an INTEGER {@code depth} SEQUENCEs
+     * down — the shape the key-size walk follows.
+     */
+    private static byte[] privateKeyDirectoryNested(int depth) {
+        byte[] inner = tlv(0x02, new byte[] {0x08, 0x00});
+        for (int i = 0; i < depth; i++) {
+            inner = tlv(0x30, inner);
+        }
+        return tlv(0x30, tlv(0xA1, inner));
+    }
+
+    private static byte[] tlv(int tag, byte[] value) {
+        byte[] header;
+        int length = value.length;
+        if (length <= 0x7F) {
+            header = new byte[] {(byte) tag, (byte) length};
+        } else if (length <= 0xFF) {
+            header = new byte[] {(byte) tag, (byte) 0x81, (byte) length};
+        } else {
+            header = new byte[] {(byte) tag, (byte) 0x82, (byte) (length >> 8), (byte) length};
+        }
+        byte[] out = new byte[header.length + length];
+        System.arraycopy(header, 0, out, 0, header.length);
+        System.arraycopy(value, 0, out, header.length, length);
+        return out;
+    }
+
+    /** {@code depth} nested constructed tags, correctly length-encoded. */
+    private static byte[] nested(int depth) {
+        byte[] inner = new byte[0];
+        for (int i = 0; i < depth; i++) {
+            byte[] header;
+            int length = inner.length;
+            if (length <= 0x7F) {
+                header = new byte[] {(byte) 0xA0, (byte) length};
+            } else if (length <= 0xFF) {
+                header = new byte[] {(byte) 0xA0, (byte) 0x81, (byte) length};
+            } else {
+                header = new byte[] {(byte) 0xA0, (byte) 0x82,
+                        (byte) (length >> 8), (byte) length};
+            }
+            byte[] next = new byte[header.length + length];
+            System.arraycopy(header, 0, next, 0, header.length);
+            System.arraycopy(inner, 0, next, header.length, length);
+            inner = next;
+        }
+        return inner;
+    }
+
+    private static int depthOf(byte[] data) {
+        int deepest = 0;
+        for (Pkcs15SecurityEnvironment.Field field : Pkcs15SecurityEnvironment.fieldsOf(data)) {
+            int here = 1 + ((field.tag & 0x20) != 0 ? depthOf(field.value) : 0);
+            deepest = Math.max(deepest, here);
+        }
+        return deepest;
+    }
+
     private static byte[] bytes(String hex) {
         return Hex.decode(hex);
     }
