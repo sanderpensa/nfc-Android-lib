@@ -144,8 +144,15 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
      */
     private final NfcSmartCardReader nfcReader;
 
-    protected Byte authKeyRef = (byte) 0x81;
-    protected Byte signKeyRef = (byte) 0x9F;
+    /**
+     * The measured key references, used only by {@link #measuredSecurityEnvironment}.
+     *
+     * <p>Primitives, not {@code Byte}: nothing assigns them any more — the Latvian
+     * subclass that once did now refuses measured constants outright — so boxing only
+     * kept an unboxing failure reachable in the one place that reads them.
+     */
+    protected byte authKeyRef = (byte) 0x81;
+    protected byte signKeyRef = (byte) 0x9F;
 
     protected String paceEcSpec;
     protected byte paceDomainParam;
@@ -863,9 +870,10 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
      * here: their values differ between personalisations that share an ATS, so a
      * constant would be wrong for some of them and
      * {@link SecurityEnvironmentException} is raised instead. The Latvian values
-     * measured so far are recorded with the device captures they came from, kept
-     * outside this repository — not in code, precisely so nobody is tempted to
-     * apply one to the wrong card. What matters here is the rule they establish:
+     * measured so far are recorded against the captures they came from, in
+     * {@code IDEMIA_LV.md} §9-§11 and in the replay fixtures — but not in production
+     * code, precisely so nobody is tempted to apply one to the wrong card. What
+     * matters here is the rule they establish:
      * two Latvian cards sharing the "SeID" ATS use {@code 0x82}/{@code 0x9E} and
      * {@code 0x81}/{@code 0x9F}, and one of them is RSA, so no constant is right
      * for all of them.
@@ -976,6 +984,17 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
         try {
             selectAppletContext(operation.context);
             return securityEnvironment(operation).namedAlgorithm();
+        } catch (SecurityEnvironmentException e) {
+            // The card would not describe its keys, so there is no algorithm to
+            // report — and this is deliberately not softened into the fallback
+            // below. Returning RS256 here would name an algorithm for a card that
+            // cannot sign at all: the caller would hash for it, put it in a token,
+            // and get this same exception from authenticate() two lines later.
+            // Failing now says what is wrong, before any of that work.
+            //
+            // Caught ahead of the transport check because it carries no cause, so
+            // cardResponse() cannot tell it apart from a lost tag.
+            throw e;
         } catch (SmartCardReaderException e) {
             if (cardResponse(e) == null) {
                 // Not the card declining: the tag is gone, or SM has broken. Asking
@@ -1008,11 +1027,15 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
         selectOberthurAid();
         SecurityEnvironment environment =
                 securityEnvironment(SigningOperation.AUTHENTICATE);
+        // Prepared before the PIN on purpose: this is where the digest is checked
+        // against the algorithm the key signs with, and a mismatch should cost the
+        // user nothing. No card I/O happens here, so the bytes that go out are the
+        // same either way.
+        byte[] input = authenticationInput(token, environment);
         verifyCode(CodeType.PIN1, pin1);
 
         reader.transmit(0x00, 0x22, 0x41, SigningOperation.AUTHENTICATE.mseSetP2,
                 environment.mseSetBody(), null);
-        byte[] input = authenticationInput(token, environment);
         byte[] signature = reader.transmit(0x00, 0x88, 0x00, 0x00, input, 0x00);
 
         // Checked here and not in calculateSignature: authentication callers have
@@ -1027,12 +1050,14 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
         selectQSCDAid();
         SecurityEnvironment environment =
                 securityEnvironment(SigningOperation.SIGN);
+        // Prepared before the PIN, as in authenticate(): the digest-length check
+        // lives in here, and a mismatch should not cost a verification.
+        byte[] input = signingInput(hash, environment);
         verifyCode(CodeType.PIN2, pin2);
 
         reader.transmit(0x00, 0x22, 0x41, SigningOperation.SIGN.mseSetP2,
                 environment.mseSetBody(), null);
-        return reader.transmit(0x00, 0x2A, 0x9E, 0x9A,
-                signingInput(hash, environment), 0x00);
+        return reader.transmit(0x00, 0x2A, 0x9E, 0x9A, input, 0x00);
     }
 
     @Override

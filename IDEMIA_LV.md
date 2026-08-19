@@ -1438,15 +1438,24 @@ at one concrete implementation — the Java/Android codebase from which
 the spec was derived — for cross-checking. A port to any other platform
 should follow the spec proper, not these files.
 
-Source-of-truth Java classes used to derive this spec:
+Source-of-truth Java classes used to derive this spec. Note what is *not* here:
+no class holds Latvian key or algorithm references. They were removed
+deliberately — see §13 — and a port that reintroduces them as constants will work
+on one Latvian card and produce unverifiable signatures on another.
 
 | File                                                                                 | Role                                                                  |
 | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/TokenWithPace.java`            | ATR table → dispatch                                                  |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/Idemia.java`                   | AIDs, cert paths, PIN refs and padding, retry counter, change/unblock |
-| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/IdemiaWithPace.java`           | PACE handshake, secure messaging, dynamic key-ref discovery           |
-| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatviaIdemiaWithPace.java`     | LV-specific MSE values, key refs, personal-data flow                  |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/IdemiaWithPace.java`           | PACE handshake, secure messaging, MSE:SET, the measured EE constants  |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatviaIdemiaWithPace.java`     | LV personal-data flow; refuses measured constants (§13)               |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatviaPersonalDataParser.java` | Personal-code → DOB                                                   |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/Pkcs15SecurityEnvironment.java` | The PKCS#15 parser §13 and §13.1 describe: EF.TokenInfo rows, key entries, EF.OD/CDF file ids |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SecurityEnvironment.java`      | One resolved `MSE:SET` — algorithm reference and key reference as a pair |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SigningOperation.java`         | Applet, operation bit and `MSE:SET` P2 per operation (§9-§11)          |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SignatureAlgorithm.java`       | Curve/OID → JWA name, and the digest each one implies                  |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/DigestInfo.java`               | The PKCS#1 encoding of §13.1's `rsaEncryption` case                    |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SignatureVerifier.java`        | The local signature check §13.1 recommends, for the `algRef` collision |
 
 If this spec and the code disagree, the code is authoritative — please open
 a PR to fix the spec.

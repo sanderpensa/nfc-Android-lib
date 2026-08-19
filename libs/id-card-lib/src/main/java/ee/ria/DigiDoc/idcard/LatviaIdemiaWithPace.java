@@ -108,9 +108,11 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
     // one, which uses the four-byte FF xx 08 00 form with the same key references —
     // and no ATS tells the two apart. Latvian cards therefore read their algorithm
     // and key references from the card (resolveSecurityEnvironmentFromCard above)
-    // and raise SecurityEnvironmentException rather than assume. The measured
-    // values, with the cards they came from, are in the capture notes kept with
-    // the device logs — outside this repository, and deliberately not here.
+    // and raise SecurityEnvironmentException rather than assume. The measured values
+    // are absent from production code, which is the point — nowhere they could be
+    // applied to a card they were not measured on. They are not secret: IDEMIA_LV.md
+    // §9-§11 document them per capture, and the replay fixtures assert them as
+    // literals, both places where a wrong value fails a test rather than a tap.
 
     /**
      * Read personal data from the auth certificate subject and EF 0x5001 (personal code).

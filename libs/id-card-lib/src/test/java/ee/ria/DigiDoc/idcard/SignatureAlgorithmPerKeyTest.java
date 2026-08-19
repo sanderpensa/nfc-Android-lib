@@ -103,6 +103,43 @@ public final class SignatureAlgorithmPerKeyTest {
     }
 
     /**
+     * A Latvian card that will not describe its keys refuses the question rather than
+     * being answered with the RSA default.
+     *
+     * <p>Such a card cannot sign at all — {@code authenticate} raises the same thing —
+     * so answering RS256 would name an algorithm the caller then hashes for and puts
+     * in a token, only to fail two steps later. Failing here is the same outcome
+     * earlier, with nothing invented in between.
+     *
+     * <p>Asserted by type, because the distinction that matters is decline versus
+     * transport failure: {@code SecurityEnvironmentException} carries no cause, so the
+     * predicate that recognises a lost tag cannot tell them apart and this case has to
+     * be caught ahead of it.
+     */
+    @Test
+    public void aCardThatWillNotDescribeItsKeysRefusesTheQuestion() throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                .with(r -> {
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
+                    // The very first metadata read is declined.
+                    r.expect("00a4020c025032", ApduReplayReader.err(0x6A, 0x82));
+                    // No applet restore: that SELECT failed, so the walk never left an
+                    // EF selected and there is nothing to put back — one APDU saved on
+                    // exactly the path that is about to fail. MAIN is still restored,
+                    // because the question always leaves the card there.
+                    r.expect(TestApdus.SEL_MAIN_AID, ok());
+                })
+                .tunnel();
+
+        SecurityEnvironmentException thrown = assertThrows(SecurityEnvironmentException.class,
+                () -> fixture.token.signatureAlgorithm(
+                        CertificateType.AUTHENTICATION, rsaCertificate()));
+
+        assertThat(thrown).hasMessageThat().contains("did not describe its keys");
+        fixture.assertAllConsumed();
+    }
+
+    /**
      * A tag that leaves the field while the card is being asked about a key is
      * reported as a lost tag, not answered with the RSA default.
      *

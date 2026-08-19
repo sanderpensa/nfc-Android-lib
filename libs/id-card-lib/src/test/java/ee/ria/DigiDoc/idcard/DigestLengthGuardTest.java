@@ -78,8 +78,6 @@ public final class DigestLengthGuardTest {
                     r.expectFileRead("5031", RsaCardMetadata.QSCD_EF_OD);
                     r.expectFileRead("7012", RsaCardMetadata.SIGN_PRKD);
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
-                    r.expect("00200085" + "0c" + TestPins.PIN2_PADDED_FF, ok());
-                    r.expect("002241b6" + "06" + "800142" + "84019f", ok());
                 })
                 .tunnel();
 
@@ -88,6 +86,9 @@ public final class DigestLengthGuardTest {
 
         assertThat(thrown).hasMessageThat().contains("signs with RS256");
         assertThat(thrown).hasMessageThat().contains("32-byte hash");
+        // No VERIFY and no MSE:SET are scripted, and every APDU the fixture holds was
+        // sent — so the refusal happened before the PIN was spent. Sending one would
+        // fail here as an unexpected APDU.
         fixture.assertAllConsumed();
     }
 
@@ -119,8 +120,6 @@ public final class DigestLengthGuardTest {
                     r.expectFileRead("5031", RsaCardMetadata.AUTH_EF_OD);
                     r.expectFileRead("7002", RsaCardMetadata.AUTH_PRKD);
                     r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
-                    r.expect("00200001" + "0c" + TestPins.PIN1_PADDED_FF, ok());
-                    r.expect("002241a4" + "06" + "800102" + "840181", ok());
                 })
                 .tunnel();
     }

@@ -162,9 +162,14 @@ public interface Token {
      *
      * <p><b>Card I/O:</b> the same as
      * {@link #signatureAlgorithm(CertificateType, byte[])}, and shares its cache —
-     * asking both costs no second read. An answer here is not a promise that signing
-     * will succeed: a card that will not describe its keys refuses the operation
-     * itself, and this reports what such a key could encode either way.
+     * asking both costs no second read.
+     *
+     * <p>A card that will not describe its own keys raises
+     * {@link SecurityEnvironmentException} from here rather than answering. It cannot
+     * sign at all — the signing calls raise the same thing — so naming an algorithm
+     * for it would be a fiction the caller then hashes for and puts in a token.
+     * Failing at the first question is the same outcome two steps earlier, with
+     * nothing invented in between.
      *
      * @param type Which of the card's keys this is about.
      * @param certificate DER-encoded certificate of that key, as returned by

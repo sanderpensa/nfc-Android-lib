@@ -27,13 +27,13 @@ public final class IdCardLibrary {
     private IdCardLibrary() {}
 
     /**
-     * The version of this library, as {@code 1.2.7-internal-release}.
+     * The version of this library, as {@code 2.0.0-internal-release}.
      *
      * <p>Two parts or three, depending on whether a suffix is set, and together
      * they are the AAR's own filename without the module and the extension:
-     * {@code id-card-lib-1.2.7-internal-release.aar} reports
-     * {@code 1.2.7-internal-release}, and a build with no suffix reports
-     * {@code 1.2.7-release}. The version comes from the committed
+     * {@code id-card-lib-2.0.0-internal-release.aar} reports
+     * {@code 2.0.0-internal-release}, and a build with no suffix reports
+     * {@code 2.0.0-release}. The version comes from the committed
      * {@code version.properties} and the optional suffix from a local
      * {@code environment.properties}, the same two that name the file; the tail is
      * the build type, which is what AGP appends to the file. So a version in a log

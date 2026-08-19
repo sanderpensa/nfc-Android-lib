@@ -67,7 +67,15 @@ import java.util.Map;
  *       table carries one byte on its six RSA rows ({@code 0x42}, {@code 0x02}) and
  *       four on its seven EC rows ({@code FF 20 08 00} onwards, the form documented
  *       for Estonian IDEMIA), while the 2026 EC card's table is one byte throughout.
- *       So it is kept as bytes, never an int, and never inferred from the card.</li>
+ *       So it is kept as bytes, never an int, and never inferred from the card.
+ *
+ *       <p>Taken as the INTEGER's content octets, unaltered. Note that the cards
+ *       encode {@code FF 20 08 00} as {@code 02 04 FF 20 08 00} — a negative
+ *       integer in strict DER. A card that encoded it correctly, as
+ *       {@code 02 05 00 FF 20 08 00}, would have that leading zero sent too:
+ *       {@code 80 05 00 FF 20 08 00}. No captured card does, and stripping leading
+ *       zeros blindly would corrupt a reference that legitimately begins with one,
+ *       so this is left as it is and written down rather than guarded against.</li>
  *   <li>Table rows are numbered in BCD ({@code 01}…{@code 09}, {@code 10}…) while
  *       the key directory references them in binary ({@code 07}…{@code 0d}), so
  *       rows are indexed under both readings.</li>

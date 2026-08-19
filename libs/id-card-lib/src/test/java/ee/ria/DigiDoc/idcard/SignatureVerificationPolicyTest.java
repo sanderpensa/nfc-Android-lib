@@ -95,7 +95,9 @@ public final class SignatureVerificationPolicyTest {
         SignatureAlgorithmException thrown = assertThrows(SignatureAlgorithmException.class,
                 () -> fixture.token.authenticate(TestPins.PIN1, Hex.decode(UNRELATED_HASH)));
 
-        assertThat(thrown).hasMessageThat().contains("does not verify under its own certificate");
+        // The stable part of the message. The rest names the two causes it could
+        // be, and that wording is free to improve without breaking this.
+        assertThat(thrown).hasMessageThat().contains("does not verify");
         // Everything the card was asked for was asked: the refusal happens after the
         // PIN has been spent, which is the cost of catching it at all.
         fixture.assertAllConsumed();

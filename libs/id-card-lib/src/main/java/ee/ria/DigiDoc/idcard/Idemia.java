@@ -25,8 +25,11 @@ import com.google.common.primitives.Bytes;
 
 import org.bouncycastle.util.encoders.Hex;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -278,6 +281,12 @@ abstract class Idemia implements Token {
                                 type, certificate.length, location,
                                 i > 0 ? String.format(" (%s held none)",
                                         locations.get(0)) : ""), null);
+                        // After the line above, not before it: the mismatch message
+                        // sends a reader to "the KeyUsage line logged when it was
+                        // read", and an anomaly is only legible under the line that
+                        // says which EF and how many bytes it is about. The PKCS#15
+                        // path already logs in this order.
+                        noteKeyUsage(type, certificate);
                         return certificate;
                     }
                     tried.add(location + (certificate == null
@@ -311,6 +320,7 @@ abstract class Idemia implements Token {
             byte[] discovered = readCertificateViaPkcs15(type);
             if (discovered != null) {
                 certificates.put(type, discovered);
+                noteKeyUsage(type, discovered);
                 return discovered;
             }
             tried.add("the PKCS#15 certificate directory (named none)");
@@ -404,6 +414,86 @@ abstract class Idemia implements Token {
                     "%s: could not re-select %s after reading the card's key description"
                             + " (%s)", operation, operation.context, e), null);
         }
+    }
+
+    /**
+     * Logs when a certificate's {@code KeyUsage} is not the one the requested type
+     * should carry. Reports only — nothing is reordered, refused or re-read.
+     *
+     * <p>Parsing a candidate as DER proves it is <em>a</em> certificate, which is
+     * what the placeholder EFs on Latvian cards needed. It does not prove it is
+     * <em>the</em> certificate: a personalisation that put the signing certificate
+     * where the authentication one is expected would return something valid for the
+     * wrong key, and the failure would surface at the end, as a signature that does
+     * not verify. {@code KeyUsage} is what tells them apart.
+     *
+     * <p>The rule is eIDAS's, not a convention observed on a few cards:
+     * {@code nonRepudiation} is what makes a qualified signature qualified, and
+     * {@code digitalSignature} is what an authentication certificate carries.
+     *
+     * <p>Silent on every certificate {@code CertificateKeyUsageTest} pins — EE IDEMIA
+     * authentication, EE Thales authentication, and both Latvian markings — across
+     * two chip families, which is why a Thales sample matters more than another
+     * IDEMIA one would. <b>EE IDEMIA's signing certificate is not among the
+     * captures.</b> It was read from a device tap on 2026-08-19 and carries
+     * {@code nonRepudiation}, so it is silent too, but that is an observation in a
+     * log rather than something this repository checks — the one certificate in
+     * production whose behaviour here is not pinned by a test.
+     *
+     * <p>Only the expected bit is tested, never the other one's absence. A
+     * certificate carrying both passes for either type, deliberately: this reports
+     * and does not decide, and a permissive certificate is not evidence that the
+     * wrong one was read. Exclusivity does hold across every capture, but that is a
+     * fact about those cards and is asserted where facts about cards belong — in
+     * {@code CertificateKeyUsageTest}, not in a runtime check that would then be
+     * flagging conformance rather than identity.
+     *
+     * <p>Log-only on purpose. Preferring a candidate by {@code KeyUsage} means
+     * falling through to the next location on a miss, and on Estonian cards there is
+     * exactly one location — so an EE card with unexpected bits would newly pay a
+     * PKCS#15 discovery walk on a tap, which is the cost EE deliberately declines
+     * elsewhere. Reporting costs nothing and no card can lose by it.
+     */
+    private void noteKeyUsage(CertificateType type, byte[] certificate) {
+        boolean[] usage;
+        try {
+            usage = ((X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new ByteArrayInputStream(certificate)))
+                    .getKeyUsage();
+        } catch (Exception e) {
+            // Not this method's business: the caller already established that these
+            // bytes parse, and anything else is reported where it is acted on.
+            return;
+        }
+        if (usage == null || usage.length < 2) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "certificate(%s): carries no KeyUsage, so it cannot be checked"
+                            + " against the type that was asked for", type), null);
+            return;
+        }
+
+        boolean digitalSignature = usage[0];
+        boolean nonRepudiation = usage[1];
+        boolean expected = type == CertificateType.SIGNING ? nonRepudiation : digitalSignature;
+        if (expected) {
+            return;
+        }
+        if (type == CertificateType.SIGNING ? digitalSignature : nonRepudiation) {
+            // The other type's bit, and only it: this is very likely the other
+            // certificate, read from a location that does not hold what was asked for.
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "certificate(%s): this certificate's KeyUsage is the other type's"
+                            + " (%s) — it looks like the wrong certificate for the key"
+                            + " that will be used, which would surface later as a"
+                            + " signature that does not verify",
+                    type, type == CertificateType.SIGNING
+                            ? "digitalSignature" : "nonRepudiation"), null);
+            return;
+        }
+        LoggingUtil.Companion.debugLog(TAG, String.format(
+                "certificate(%s): KeyUsage carries neither digitalSignature nor"
+                        + " nonRepudiation, so it says nothing about which key this is",
+                type), null);
     }
 
     /**
@@ -658,10 +748,13 @@ abstract class Idemia implements Token {
                     operation), null);
             case MISMATCHED -> {
                 String message = String.format(
-                        "%s: the card returned a signature that does not verify under its own"
-                                + " certificate. The algorithm or key reference it described"
-                                + " does not match what it actually signed with — environment:"
-                                + " %s", operation, environment);
+                        "%s: the card returned a signature that does not verify under this"
+                                + " certificate. Either the algorithm or key reference the card"
+                                + " described does not match what it actually signed with, or"
+                                + " this is not the certificate for the key that signed — a"
+                                + " location holding the other type's certificate looks exactly"
+                                + " like this. Check the KeyUsage line logged when it was read."
+                                + " Environment: %s", operation, environment);
                 if (environment.source() == SecurityEnvironment.Source.CARD) {
                     throw new SignatureAlgorithmException(message);
                 }
