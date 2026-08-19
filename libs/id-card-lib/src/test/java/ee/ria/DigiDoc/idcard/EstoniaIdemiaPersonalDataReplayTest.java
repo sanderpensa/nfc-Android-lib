@@ -86,6 +86,13 @@ public final class EstoniaIdemiaPersonalDataReplayTest {
         assertThat(certHex).contains(
                 "4ac395454f52472c4a41414b2d4b524953544a414e2c3338303031303835373138");
 
+        // The algorithm named for this key, from an Estonian card's real certificate:
+        // the curve comes from the OID the certificate carries, so this is the same
+        // path LatviaIdemiaSeIdSessionReplayTest covers for the other card family.
+        // Costs no APDU — an EC key is settled by its curve.
+        assertThat(fixture.token.signatureAlgorithm(
+                CertificateType.AUTHENTICATION, cert)).isEqualTo(SignatureAlgorithm.ES384);
+
         fixture.assertAllConsumed();
     }
 

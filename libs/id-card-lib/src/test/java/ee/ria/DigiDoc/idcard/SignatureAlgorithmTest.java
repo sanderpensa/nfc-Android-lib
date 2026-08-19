@@ -5,9 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.asn1.sec.SECNamedCurves;
+import org.bouncycastle.asn1.x9.X9ECParameters;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.jce.spec.ECParameterSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigInteger;
 import java.security.KeyPair;
@@ -145,6 +150,72 @@ public final class SignatureAlgorithmTest {
         assertThat(SignatureAlgorithm.ES512.digestLength()).isEqualTo(64);
     }
 
+    /**
+     * A curve JWA does not name is refused, not approximated by the size of its
+     * order.
+     *
+     * <p>brainpoolP256r1 and secp256k1 both have 256-bit orders and neither is
+     * P-256. Labelling either ES256 produces a token that verifies nowhere — the
+     * same failure as a wrong algorithm reference, reached from the other end —
+     * and these are not hypothetical curves here: PACE runs on brainpoolP256r1 on
+     * the Latvian cards this library talks to.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"brainpoolP256r1", "brainpoolP384r1", "secp256k1"})
+    public void forCertificate_aCurveJwaDoesNotName_isRefused(String curve) throws Exception {
+        // Generated through BouncyCastle explicitly: the platform providers do not
+        // offer these curves, and falling back to a skip would make this pass
+        // without testing anything — which it did, before the provider was named.
+        byte[] certificate = certificateWithEcKey(curve, new BouncyCastleProvider());
+
+        SignatureAlgorithmException thrown = assertThrows(SignatureAlgorithmException.class,
+                () -> SignatureAlgorithm.forCertificate(certificate));
+        assertThat(thrown).hasMessageThat().contains("not P-256, P-384 or P-521");
+    }
+
+    /**
+     * A certificate that carries explicit domain parameters instead of naming a curve
+     * is refused, not labelled from the numbers.
+     *
+     * <p>Asserted as a refusal rather than by message, because two layers can refuse
+     * it and which one does is the platform's business. On this JVM the JCA key
+     * extraction rejects such a certificate before the curve check is reached; where a
+     * provider accepts it — Android's may — the curve check refuses it for naming no
+     * curve. Either way the parameters might well describe P-384 exactly, and a
+     * library that inferred that from the numbers would be back to identifying curves
+     * by arithmetic.
+     */
+    @Test
+    public void forCertificate_aCertificateThatNamesNoCurve_isRefused() throws Exception {
+        X9ECParameters p384 = SECNamedCurves.getByName("secp384r1");
+        ECParameterSpec explicit = new ECParameterSpec(
+                p384.getCurve(), p384.getG(), p384.getN(), p384.getH());
+        BouncyCastleProvider bc = new BouncyCastleProvider();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC", bc);
+        generator.initialize(explicit);
+        byte[] certificate = selfSignedCertificate(
+                generator.generateKeyPair(), "SHA256withECDSA", bc);
+
+        SignatureAlgorithmException thrown = assertThrows(SignatureAlgorithmException.class,
+                () -> SignatureAlgorithm.forCertificate(certificate));
+        // Whichever layer refused, the outcome that matters is that no JWA name was
+        // handed out for a curve nothing named.
+        assertThat(thrown).hasMessageThat().doesNotContain("ES");
+    }
+
+    /** The three curves JWA does name still answer, by identity rather than size. */
+    @ParameterizedTest
+    @CsvSource({
+            "secp256r1, ES256",
+            "secp384r1, ES384",
+            "secp521r1, ES512",
+    })
+    public void forCertificate_theThreeJwaCurvesAreIdentified(String curve, String expected)
+            throws Exception {
+        assertThat(SignatureAlgorithm.forCertificate(certificateWithEcKey(curve)).jwaName())
+                .isEqualTo(expected);
+    }
+
     @Test
     public void forCertificate_notACertificate_isRefused() {
         assertThrows(SignatureAlgorithmException.class,
@@ -212,6 +283,18 @@ public final class SignatureAlgorithmTest {
         return selfSignedCertificate(generator.generateKeyPair(), "SHA256withECDSA");
     }
 
+    /**
+     * As above, from a named provider — for curves the platform does not offer.
+     * The provider has to sign the certificate as well as generate the key: the
+     * default signature implementation refuses a curve it does not know.
+     */
+    private static byte[] certificateWithEcKey(String curve, java.security.Provider provider)
+            throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC", provider);
+        generator.initialize(new ECGenParameterSpec(curve));
+        return selfSignedCertificate(generator.generateKeyPair(), "SHA256withECDSA", provider);
+    }
+
     private static byte[] certificateWithRsaKey() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
@@ -220,6 +303,16 @@ public final class SignatureAlgorithmTest {
 
     private static byte[] selfSignedCertificate(KeyPair keyPair, String signatureAlgorithm)
             throws Exception {
+        return selfSignedCertificate(keyPair, signatureAlgorithm, null);
+    }
+
+    private static byte[] selfSignedCertificate(
+            KeyPair keyPair, String signatureAlgorithm, java.security.Provider provider)
+            throws Exception {
+        JcaContentSignerBuilder signer = new JcaContentSignerBuilder(signatureAlgorithm);
+        if (provider != null) {
+            signer.setProvider(provider);
+        }
         X500Principal subject = new X500Principal("CN=Signature Algorithm Test");
         long now = 1_760_000_000_000L;
         return new JcaX509v3CertificateBuilder(
@@ -229,8 +322,7 @@ public final class SignatureAlgorithmTest {
                 new Date(now + 86_400_000L),
                 subject,
                 keyPair.getPublic())
-                .build(new JcaContentSignerBuilder(signatureAlgorithm)
-                        .build(keyPair.getPrivate()))
+                .build(signer.build(keyPair.getPrivate()))
                 .getEncoded();
     }
 }

@@ -19,6 +19,12 @@
 
 package ee.ria.DigiDoc.idcard;
 
+import org.bouncycastle.asn1.ASN1Encodable;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.sec.SECObjectIdentifiers;
+import org.bouncycastle.asn1.x509.Certificate;
+import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
+
 import java.io.ByteArrayInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -174,7 +180,7 @@ public enum SignatureAlgorithm {
             throws SignatureAlgorithmException {
         PublicKey key = publicKey(certificate);
         if (key instanceof ECPublicKey ecKey) {
-            return forEcKey(ecKey);
+            return forEcKey(namedCurve(certificate), ecKey);
         }
         if ("RSA".equals(key.getAlgorithm())) {
             return forRsaKey();
@@ -189,20 +195,76 @@ public enum SignatureAlgorithm {
      * An EC key settles it on its own: JWA ties each curve to one hash, so there is
      * nothing left to ask the card.
      *
-     * <p>Selected on the order's bit length rather than a nominal key size, because
-     * the order is what distinguishes P-521 from anything calling itself 512.
+     * <p>Identified by the curve the certificate names, not by the size of the key or
+     * its order. RFC 7518 §3.1 does not define ES256 as "ECDSA over any 256-bit
+     * curve" — it names P-256 specifically, and likewise P-384 and P-521.
+     * brainpoolP256r1 and secp256k1 both have 256-bit orders and neither is P-256, so
+     * a key on either would be labelled ES256 and produce a token no verifier
+     * accepts. That is the same class of failure as a wrong algorithm reference,
+     * arrived at from the other end, and brainpool is not hypothetical here: PACE
+     * itself runs on brainpoolP256r1 on Latvian cards.
+     *
+     * <p>Taken from the certificate rather than looked up through the platform.
+     * {@code AlgorithmParameters.getInstance("EC")} would be the obvious way to name a
+     * curve, and it is unavailable below API 26 while this library declares
+     * {@code minSdk = 24} — where it would have refused every EC key on every card,
+     * blaming the card for a curve the platform simply could not name.
+     *
+     * <p>A curve that is none of the three is refused rather than approximated. So is
+     * a certificate that names none, because an unidentifiable curve and a
+     * mislabelled one fail the same way downstream and only one of them can be
+     * diagnosed from the error.
      */
-    private static SignatureAlgorithm forEcKey(ECPublicKey key)
+    private static SignatureAlgorithm forEcKey(ASN1ObjectIdentifier curve, ECPublicKey key)
             throws SignatureAlgorithmException {
-        int bits = key.getParams().getOrder().bitLength();
-        return switch (bits) {
-            case 256 -> ES256;
-            case 384 -> ES384;
-            case 521 -> ES512;
-            default -> throw new SignatureAlgorithmException(
-                    "Unsupported EC curve: order is " + bits + " bits, expected 256, 384"
-                            + " or 521");
-        };
+        if (curve == null) {
+            throw new SignatureAlgorithmException(String.format(
+                    "Cannot identify this EC key's curve: the certificate does not name it as"
+                            + " an OID this library could read, and a %d-bit order does not say"
+                            + " which curve it is. JWA names P-256, P-384 and P-521 and no"
+                            + " others.",
+                    key.getParams().getOrder().bitLength()));
+        }
+        if (SECObjectIdentifiers.secp384r1.equals(curve)) {
+            return ES384;
+        }
+        if (X9ObjectIdentifiers.prime256v1.equals(curve)) {
+            return ES256;
+        }
+        if (SECObjectIdentifiers.secp521r1.equals(curve)) {
+            return ES512;
+        }
+        throw new SignatureAlgorithmException(String.format(
+                "Unsupported EC curve %s: not P-256, P-384 or P-521. JWA names those three"
+                        + " and no others, so there is no algorithm name this key could be"
+                        + " given that would verify.", curve.getId()));
+    }
+
+    /**
+     * The curve a certificate's {@code SubjectPublicKeyInfo} names, or {@code null}
+     * when it carries explicit domain parameters instead.
+     *
+     * <p>Parsed with BouncyCastle rather than scanned. The tolerant DER walker in
+     * {@link Pkcs15SecurityEnvironment} exists to salvage truncated PKCS#15 reads —
+     * it clamps over-long lengths and does not implement high-tag-number form — and
+     * while none of that bites on a valid certificate, it should not be the authority
+     * on which curve a signature gets labelled with. BouncyCastle is already an
+     * implementation dependency and needs no registered provider.
+     */
+    private static ASN1ObjectIdentifier namedCurve(byte[] certificate) {
+        try {
+            ASN1Encodable parameters = Certificate.getInstance(certificate)
+                    .getSubjectPublicKeyInfo().getAlgorithm().getParameters();
+            return parameters instanceof ASN1ObjectIdentifier oid ? oid : null;
+        } catch (IllegalArgumentException e) {
+            // The JCA parse in publicKey() ran first and succeeded, so this is not a
+            // malformed certificate — it is one whose parameters this cannot read.
+            // Same answer either way: unidentifiable, refused above. Which of the two
+            // it was is deliberately not claimed in that refusal, because a provider
+            // that accepts what this parser rejects would make the claim wrong, and a
+            // wrong diagnosis of the card is the failure this path exists to avoid.
+            return null;
+        }
     }
 
     /**

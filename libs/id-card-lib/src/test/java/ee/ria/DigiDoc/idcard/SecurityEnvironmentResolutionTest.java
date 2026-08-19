@@ -4,6 +4,8 @@ import static com.google.common.truth.Truth.assertThat;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
+
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.jupiter.api.Test;
 
@@ -113,6 +115,49 @@ public final class SecurityEnvironmentResolutionTest {
 
         assertThat(thrown).hasMessageThat().contains("SIGN");
         assertThat(thrown).hasMessageThat().contains("did not describe its keys");
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * A tag that leaves the field mid-walk is reported as what it is, not as a card
+     * that would not describe itself.
+     *
+     * <p>The distinction matters because the two call for opposite responses. "This
+     * card did not describe its keys" tells the user the card cannot be used and
+     * there is no point retrying; a lost tag means hold it still and try again. With
+     * no fallback behind Latvian resolution, swallowing the transport failure turns
+     * every fumbled tap into a condemned card.
+     *
+     * <p>Asserted by exception type: a {@code SmartCardReaderException} that is not a
+     * {@link SecurityEnvironmentException}, carrying the transport cause.
+     *
+     * <p>The applet re-select is scripted because the walk restores it on the way to
+     * the throw as well as on the way out — the same shape {@code certificate()} uses,
+     * and it matters for an SM desync rather than a genuinely lost tag: a caller that
+     * catches and retries must not inherit a card with an EF still selected. Here it
+     * fails too, since the tag really is gone, and that failure must not replace the
+     * error being reported.
+     */
+    @Test
+    public void aTagLostWhileWalkingIsReportedAsATagLoss() throws Exception {
+        var fixture = ReplayFixture.lv()
+                .with(r -> {
+                    r.expect(TestApdus.SEL_QSCD_AID, ApduReplayReader.ok());
+                    r.expect(SELECT_TOKEN_INFO, ApduReplayReader.ok());
+                    // The table read starts, and the tag goes.
+                    r.expect("00b0000000", ApduReplayReader.tagLost());
+                    // The restore is attempted, and fails the same way.
+                    r.expect(TestApdus.SEL_QSCD_AID, ApduReplayReader.tagLost());
+                })
+                .tunnel();
+
+        SmartCardReaderException thrown = assertThrows(SmartCardReaderException.class,
+                () -> fixture.token.calculateSignature(
+                        TestPins.PIN2, Hex.decode(TestApdus.SIGN_INPUT_HASH_48), true));
+
+        assertThat(thrown).isNotInstanceOf(SecurityEnvironmentException.class);
+        assertThat(thrown).hasCauseThat().hasMessageThat().contains("Tag was lost");
+        // Every APDU the fixture holds was sent, the restore attempt included.
         fixture.assertAllConsumed();
     }
 

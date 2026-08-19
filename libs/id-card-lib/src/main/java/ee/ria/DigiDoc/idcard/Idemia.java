@@ -127,12 +127,24 @@ abstract class Idemia implements Token {
             new EnumMap<>(SigningOperation.class);
 
     /**
-     * The card's algorithm table. Both applets of every card seen so far publish
-     * the same one — it describes what the platform can do, not what one applet
-     * holds — so it is read once and shared. An empty result is not cached as an
-     * answer, so a card that only exposes it under one applet still works.
+     * The algorithm table each applet publishes, read once per applet per session.
+     *
+     * <p>Per applet rather than shared, because the table is what an applet's own
+     * key directory references and nothing guarantees the two applets agree. They
+     * are not even the same file: the 2020 Latvian card's Oberthur EF.TokenInfo is
+     * 563 bytes and its QSCD one 581. Those two happen to describe identical rows,
+     * so sharing produced the right answer on every card measured — but if a
+     * personalisation ever numbered its rows differently per applet, sharing would
+     * stage an algorithm reference from the wrong table and the card would accept
+     * it, which is the failure this whole path exists to avoid.
+     *
+     * <p>The cost is one of those three files read a second time, under the other
+     * applet — roughly 150 ms of the ~650 ms walk — and only in a session that both
+     * authenticates and signs. An empty result is not kept, so a card that
+     * exposes the table under only one applet still works.
      */
-    private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable;
+    private final Map<AppletContext, Map<Integer, Pkcs15SecurityEnvironment.Algorithm>>
+            algorithmTables = new EnumMap<>(AppletContext.class);
 
     /**
      * Whether resolving the security environment got as far as selecting a file.
@@ -381,6 +393,23 @@ abstract class Idemia implements Token {
      * method expects to find it. Failure to do so is logged, never thrown: it
      * must not replace whatever the caller is about to be told.
      */
+    /**
+     * Puts the applet back after a metadata walk, tolerating its own failure.
+     *
+     * <p>The counterpart of {@link #restoreMainAid} for the resolution walk, and
+     * silent for the same reason: it runs on the way to a throw as well as on the
+     * way out, and the exception worth reporting is the one already in flight.
+     */
+    private void restoreAppletContext(SigningOperation operation) {
+        try {
+            selectAppletContext(operation.context);
+        } catch (Exception e) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: could not re-select %s after reading the card's key description"
+                            + " (%s)", operation, operation.context, e), null);
+        }
+    }
+
     private void restoreMainAid(CertificateType type) {
         try {
             selectMainAid();
@@ -416,14 +445,23 @@ abstract class Idemia implements Token {
         walkSelectedAnEf = false;
         SecurityEnvironment resolved;
         if (resolveSecurityEnvironmentFromCard()) {
-            resolved = securityEnvironmentFromCard(operation);
-            if (walkSelectedAnEf) {
-                // The walk left an EF selected; put the applet back the way the
-                // caller had it, on the way out and on the way to the throw alike
-                // — a caller that catches and carries on must not inherit a
-                // half-walked card. Skipped when nothing was read, so a card
-                // without TokenInfo costs one APDU rather than three.
-                selectAppletContext(operation.context);
+            try {
+                resolved = securityEnvironmentFromCard(operation);
+            } finally {
+                if (walkSelectedAnEf) {
+                    // The walk left an EF selected; put the applet back the way the
+                    // caller had it, on every exit — a caller that catches and
+                    // carries on must not inherit a half-walked card, and that
+                    // includes the caller that catches a transport failure and
+                    // retries. In a finally for that reason: an SM desync throws
+                    // from the middle of the walk, which is exactly the case where
+                    // the next attempt needs the applet current.
+                    //
+                    // Its own failure is swallowed, as in certificate(): a restore
+                    // that throws must not replace the error being reported, which
+                    // is the one that says what actually went wrong.
+                    restoreAppletContext(operation);
+                }
             }
             if (resolved == null) {
                 // No fallback here on purpose — see SecurityEnvironmentException.
@@ -468,9 +506,13 @@ abstract class Idemia implements Token {
      * The card's own answer, or {@code null} when it does not give one. Never
      * throws: every failure here is a reason to fall back, not to fail.
      */
-    private SecurityEnvironment securityEnvironmentFromCard(SigningOperation operation) {
+    private SecurityEnvironment securityEnvironmentFromCard(SigningOperation operation)
+            throws SmartCardReaderException {
         try {
-            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table = algorithmTable();
+            // The applet's own table: it is what this applet's key directory
+            // references. See algorithmTables.
+            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table =
+                    algorithmTable(operation.context);
             if (table.isEmpty()) {
                 return null;
             }
@@ -483,6 +525,14 @@ abstract class Idemia implements Token {
                     Pkcs15SecurityEnvironment.keys(readEf(directoryId));
             return firstUsableEnvironment(operation, keys, table);
         } catch (Exception e) {
+            if (e instanceof SmartCardReaderException card && cardResponse(card) == null) {
+                // Not the card declining: the tag is gone, or SM has broken. There
+                // is no fallback behind this on a Latvian card, so swallowing it
+                // would report a transport failure as "this card did not describe
+                // its keys" — a card the user is told to stop using, when all that
+                // happened is that they moved the phone.
+                throw card;
+            }
             LoggingUtil.Companion.debugLog(TAG, String.format(
                     "%s: could not read the card's key description (%s)", operation, e), null);
             return null;
@@ -530,13 +580,18 @@ abstract class Idemia implements Token {
     }
 
     /** EF.TokenInfo's algorithm table, read once per session. */
-    private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable()
-            throws SmartCardReaderException {
-        if (algorithmTable != null && !algorithmTable.isEmpty()) {
-            return algorithmTable;
+    private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable(
+            AppletContext context) throws SmartCardReaderException {
+        Map<Integer, Pkcs15SecurityEnvironment.Algorithm> cached = algorithmTables.get(context);
+        if (cached != null && !cached.isEmpty()) {
+            return cached;
         }
-        algorithmTable = Pkcs15SecurityEnvironment.algorithms(readEf(EF_TOKEN_INFO));
-        return algorithmTable;
+        Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table =
+                Pkcs15SecurityEnvironment.algorithms(readEf(EF_TOKEN_INFO));
+        if (!table.isEmpty()) {
+            algorithmTables.put(context, table);
+        }
+        return table;
     }
 
     /**

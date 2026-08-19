@@ -65,6 +65,15 @@ public final class LatviaIdemiaSeIdSessionReplayTest {
 
         assertThat(Hex.toHexString(signature)).isEqualTo(CAPTURED_AUTH_SIGNATURE);
         assertSignedBy(certificate, Hex.decode(TestApdus.CAPTURED_AUTH_HASH), signature);
+
+        // The algorithm named for this key, from a real card's certificate rather
+        // than a generated one: the curve is identified by the OID the certificate
+        // publishes, so this is the path that has to work on a device where the
+        // platform cannot name curves at all. Costs no APDU — an EC key is settled
+        // by its curve, so nothing is asked of the card.
+        assertThat(fixture.token.signatureAlgorithm(
+                CertificateType.AUTHENTICATION, certificate))
+                .isEqualTo(SignatureAlgorithm.ES384);
         fixture.assertAllConsumed();
     }
 

@@ -302,8 +302,9 @@ The functions are defined in the `Token` interface.
 > `LATVIA_IDEMIA`, the algorithm and key references used to sign are read from the
 > card's own PKCS#15 metadata rather than assumed, because those values differ
 > between Latvian personalisations that share an ATS — and in one case differ from
-> the values the library would otherwise have sent. That costs one extra file read
-> per operation, roughly 650 ms, cached for the session. Estonian cards skip it and
+> the values the library would otherwise have sent. That costs a PKCS#15 walk
+> — three files, about nine APDUs — roughly 650 ms per operation, cached for the
+> session. Estonian cards skip it and
 > behave exactly as before. Neither needs anything from the caller.
 >
 > **What a key can sign with, as opposed to what it will.** `signatureAlgorithm(type, cert)` returns the one algorithm the library will use, and that is the one to name in a token or JWS header. `permittedAlgorithms(type, cert)` returns everything that key could sign with — usually just that one, since an EC key is fixed by its curve and an RSA key is fixed by the card whenever the card names a hash. More than one comes back only for an RSA key whose card names no hash: it signs whatever it is handed, so the PKCS#1 encoding built by this library is what fixes the algorithm, and RS256, RS384 and RS512 are equally valid. The library still uses RS256 there and requires a digest matching it — this is an answer about the card, not a setting. It shares the cache with `signatureAlgorithm`, so asking both costs no extra read.

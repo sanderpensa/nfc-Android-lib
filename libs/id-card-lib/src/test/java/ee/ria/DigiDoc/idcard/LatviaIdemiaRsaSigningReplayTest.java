@@ -82,12 +82,22 @@ public final class LatviaIdemiaRsaSigningReplayTest {
     }
 
     /**
-     * A second operation in the same session must not re-read the algorithm
-     * table: it describes the platform, not the applet, so it is cached. Only the
-     * key directory is read again, under the other applet.
+     * Each applet's algorithm table is read under that applet, not shared from
+     * whichever one was asked first.
+     *
+     * <p>They are not the same file — this card's Oberthur EF.TokenInfo is 563
+     * bytes and its QSCD one 581 — and it is the applet's own key directory that
+     * references the rows. The two happen to describe identical rows here, so the
+     * signature is the same either way; what this pins is that the reference used
+     * to produce it came from the table belonging to the key that signed. Sharing
+     * would stage a reference from the wrong table on any card whose applets
+     * numbered their rows differently, and the card would answer 90 00 to it.
+     *
+     * <p>The cost is the second {@code 50 32} read below, which is the price of
+     * not assuming.
      */
     @Test
-    public void aSecondOperationReusesTheAlgorithmTable() throws Exception {
+    public void eachAppletsAlgorithmTableIsReadUnderThatApplet() throws Exception {
         var fixture = ReplayFixture.lvSeid()
                 .with(r -> {
                     r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
@@ -99,7 +109,9 @@ public final class LatviaIdemiaRsaSigningReplayTest {
                             bytes(RSA_SIGNATURE_256));
 
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
-                    // No second 50 32 read — that is the assertion.
+                    // The QSCD applet's own table, read under QSCD — that is the
+                    // assertion. A shared cache would skip this read.
+                    r.expectFileRead("5032", RsaCardMetadata.TOKEN_INFO_QSCD);
                     r.expectFileRead("5031", RsaCardMetadata.QSCD_EF_OD);
                     r.expectFileRead("7012", RsaCardMetadata.SIGN_PRKD);
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
@@ -122,7 +134,7 @@ public final class LatviaIdemiaRsaSigningReplayTest {
     }
 
     private static void readSignMetadata(ApduReplayReader r) {
-        r.expectFileRead("5032", RsaCardMetadata.TOKEN_INFO_OBERTHUR);
+        r.expectFileRead("5032", RsaCardMetadata.TOKEN_INFO_QSCD);
         r.expectFileRead("5031", RsaCardMetadata.QSCD_EF_OD);
         r.expectFileRead("7012", RsaCardMetadata.SIGN_PRKD);
     }
