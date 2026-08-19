@@ -104,9 +104,10 @@ public interface Token {
      *
      * <p><b>Card I/O:</b> none for an EC key — the curve settles it. For an RSA key
      * the certificate settles nothing, so the card is asked which hash that key
-     * signs with. That is a PKCS#15 walk — three files, about nine APDUs, roughly
-     * 650 ms — cached for the session, and it leaves the card on the MAIN AID. That
-     * is why this declares {@code SmartCardReaderException}.
+     * signs with. That is a PKCS#15 walk — three files and the applet re-select,
+     * twelve APDUs, measured at 930–945 ms on a Latvian "TeID2" card — cached for
+     * the session, and it leaves the card on the MAIN AID. That is why this
+     * declares {@code SmartCardReaderException}.
      *
      * <p>Implementations whose card supports a different set of algorithms
      * override this. The default answers from the certificate alone, which is

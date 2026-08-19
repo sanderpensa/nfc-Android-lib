@@ -139,8 +139,9 @@ abstract class Idemia implements Token {
      * it, which is the failure this whole path exists to avoid.
      *
      * <p>The cost is one of those three files read a second time, under the other
-     * applet — roughly 150 ms of the ~650 ms walk — and only in a session that both
-     * authenticates and signs. An empty result is not kept, so a card that
+     * applet: EF.TokenInfo is the largest of them, measured at 5 APDUs and 430 ms of
+     * a 12-APDU, ~940 ms walk — and only in a session that both authenticates and
+     * signs. An empty result is not kept, so a card that
      * exposes the table under only one applet still works.
      */
     private final Map<AppletContext, Map<Integer, Pkcs15SecurityEnvironment.Algorithm>>
@@ -428,7 +429,7 @@ abstract class Idemia implements Token {
      * <p>The card is asked first because it is the only source that can be right
      * for a personalisation nobody has seen. Two Latvian cards share an ATS while
      * using different key references, so no amount of model detection can pick
-     * between them; the key directory can. That costs a PKCS#15 walk — about nine
+     * between them; the key directory can. That costs a PKCS#15 walk — twelve
      * APDUs, once per operation per session.
      *
      * <p>It falls back rather than failing, because a card that answers something
@@ -488,7 +489,7 @@ abstract class Idemia implements Token {
      * <p>Off by default, which is the Estonian answer. Their layout is documented
      * and one pair of key references — {@code 0x81} / {@code 0x9F} — has served
      * every marking in the field, so a walk there protects against a variation
-     * nobody has seen while costing ~650 ms per operation on a tap that can be lost
+     * nobody has seen while costing ~940 ms per operation on a tap that can be lost
      * for being slow. Latvian cards turn it on, and have every reason to: five
      * personalisations, two of them behind one ATS, with key references, algorithm
      * reference widths and even key types varying between them.

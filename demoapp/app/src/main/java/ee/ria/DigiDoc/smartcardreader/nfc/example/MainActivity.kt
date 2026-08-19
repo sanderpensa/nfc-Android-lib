@@ -28,10 +28,12 @@ import android.system.Os
 import androidx.appcompat.app.AppCompatActivity
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
+import ee.ria.DigiDoc.idcard.IdCardLibrary
 import ee.ria.DigiDoc.smartcardreader.nfc.NfcSmartCardReaderManager
 import ee.ria.DigiDoc.smartcardreader.nfc.example.configuration.ContainerConfiguration
 import ee.ria.DigiDoc.smartcardreader.nfc.example.databinding.ActivityMainBinding
 import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil.Companion.errorLog
+import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil.Companion.infoLog
 import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil.Companion.initialize
 import ee.ria.libdigidocpp.Conf
 import ee.ria.libdigidocpp.DigiDocConf
@@ -54,6 +56,14 @@ class MainActivity : AppCompatActivity() {
                 NfcSmartCardReaderManager::class.java.name
             ), true
         )
+
+        // What an integrator does with IdCardLibrary.version(): report which build
+        // of the library is in the app. Logged here as the first thing after
+        // logging is on, so a capture that starts with the app has it; the library
+        // repeats it on every card line, so a capture that starts later does too.
+        // Equally suited to a crash report or an about screen — it reads a
+        // compile-time constant and touches no card.
+        infoLog(logTag, "id-card-lib ${IdCardLibrary.version()}")
 
         // install schema files
         val digidocWrapperImpl = DigiDocWrapperImpl(this)

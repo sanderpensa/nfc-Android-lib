@@ -127,9 +127,15 @@ public interface TokenWithPace extends Token {
         // Worth one line per tap: working out which card produced a log by
         // comparing certificate sizes against notes is slow and easy to get
         // wrong. Marking, type and implementation together say it outright.
+        //
+        // The library version rides along rather than being announced once at
+        // startup, because captures are whole-app logcat started mid-session — a
+        // banner from before the capture window is a banner nobody has. On this
+        // line it cannot be separated from the card it describes, including in an
+        // excerpt pasted into CARD_VARIANTS.md.
         LoggingUtil.Companion.debugLog(TAG, String.format(
-                "card: %s (%s) -> %s", marking(atr), detected,
-                token.getClass().getSimpleName()), null);
+                "card: %s (%s) -> %s [id-card-lib %s]", marking(atr), detected,
+                token.getClass().getSimpleName(), IdCardLibrary.version()), null);
         return token;
     }
 

@@ -7,7 +7,8 @@
   - [Testing with the Demo App](#testing-with-the-demo-app)  
   - [Using the Libraries in Other Applications](#using-the-libraries-in-other-applications) 
     - [Building the AAR](#building-the-aar) 
-    - [Overriding the AAR Filename](#overriding-the-aar-filename) 
+    - [Versioning the AAR](#versioning-the-aar) 
+    - [Reporting the Library Version](#reporting-the-library-version) 
     - [Integrator Dependencies](#integrator-dependencies) 
     - [Minimum SDK and Core Library Desugaring](#minimum-sdk-and-core-library-desugaring) 
 - [Overview](#overview) 
@@ -82,33 +83,102 @@ The demo application (`demoapp/app`) provides a complete reference implementatio
   * `libs/card-utils-lib/build/outputs/aar`
 * Move the resulting `.aar` files to your project's `/libs` directory.
 * Add the dependencies to your application's `build.gradle` file:
-    * `implementation files('app/libs/id-card-lib.aar')`
-    * `implementation files('app/libs/smart-card-reader-lib.aar')`
+    * `implementation files('app/libs/id-card-lib-1.2.7-release.aar')`
+    * `implementation files('app/libs/smart-card-reader-lib-1.2.7-release.aar')`
+    * `implementation files('app/libs/card-utils-lib-1.2.7-release.aar')`
 
-#### Overriding the AAR Filename
+The filenames carry the library version and the build type — see
+[Versioning the AAR](#versioning-the-aar) for where those come from and what to do
+if you would rather drop them in under a stable name.
 
-By default the build produces `id-card-lib.aar`, `smart-card-reader-lib.aar`, and `card-utils-lib.aar`.
-To stamp a version number and/or a custom suffix into the filename (useful when
-distributing internal builds side-by-side, or when consumers need to pin an
-exact build), create an `environment.properties` file at the repository root:
+#### Versioning the AAR
+
+The AAR name carries the library version, and optionally a suffix marking it as
+somebody's own build. They come from two files, which differ in one important way.
+
+**`version.properties`, at the repository root, is committed:**
+
+```properties
+# version.properties
+version=1.2.7
+```
+
+This is the library version for all three AARs. It is in git on purpose — a
+version is a fact about the source, so a version in a log or an AAR name maps back
+to a commit, and bumping it is a reviewable change. Pre-release tags work:
+`1.2.7-rc` is a valid version. The build fails if the file or the key is missing,
+since that means it was deleted rather than never created.
+
+**`environment.properties`, also at the root, is gitignored and optional:**
 
 ```properties
 # environment.properties
-version=1.1.4
-suffix=internal
+version.suffix=internal
 ```
 
-A template is checked in as `environment.properties.example`. Both keys are
-optional and independent:
+A template is checked in as `environment.properties.example`. Set it to keep your
+own builds apart from a release, or when consumers need to pin an exact build; it
+never lands in a release AAR by accident because it is never committed.
 
-* `version` only         → `id-card-lib-1.1.4.aar`
-* `suffix` only          → `id-card-lib-internal.aar`
-* both                   → `id-card-lib-1.1.4-internal.aar`
-* file missing / blank   → `id-card-lib.aar` (default)
+* without a suffix → `id-card-lib-1.2.7-release.aar`
+* with one        → `id-card-lib-1.2.7-internal-release.aar`
 
-The override applies to every Android library subproject under `libs/` and is
-wired up in `libs/build.gradle.kts`. `environment.properties` is gitignored, so
-local overrides do not leak into commits.
+The trailing `-release` is the build type, which AGP appends to every AAR it
+writes — a debug build of the first line is `id-card-lib-1.2.7-debug.aar`. It is
+not part of what these keys control, but it is part of the filename, and the
+version the library reports about itself includes it for that reason.
+
+**Every AAR is versioned, so there is no bare `id-card-lib.aar`.** Integrators have
+two workable conventions and should pick one deliberately:
+
+* **Keep the emitted name** and reference it as-is, as the snippets above do. The
+  dependency line then states which build is in the app, and bumping the library is
+  a visible one-line change.
+* **Rename on drop-in** to a stable `id-card-lib.aar`. The dependency lines never
+  change, but nothing in the consuming project records which build it holds — so
+  ask the library instead, with `IdCardLibrary.version()`.
+
+Both values become a filename and a Java string literal, so both are restricted to
+letters, digits, dots, underscores and hyphens, with a hyphen between other
+characters rather than at either end. Anything else — a slash, a space, a quote —
+fails the build with a message naming the key that is wrong, rather than a javac
+error in generated code.
+
+This applies to every Android library subproject under `libs/` and is wired up in
+`libs/build.gradle.kts`.
+
+> [!NOTE]
+> `version` and `suffix` used to live together in `environment.properties`. The
+> version moved to `version.properties`, and `suffix` is now `version.suffix`. A
+> leftover key of either old name is warned about at configuration time rather
+> than silently ignored.
+
+#### Reporting the Library Version
+
+The same two values reach the code, so a build can say what it is:
+
+```kotlin
+IdCardLibrary.version()   // "1.2.7-internal-release", or "1.2.7-release" with no suffix
+```
+
+That is the AAR's own filename without the module and the extension —
+`id-card-lib-1.2.7-internal-release.aar` reports `1.2.7-internal-release` — so a
+version in a log and the artefact it came from cannot disagree. The tail is the
+build type, named rather than inferred, so a `-debug` in a log is recognisable as
+a build that was never shipped. Because the version is committed, every build
+reports a real one; there is no "unknown" case.
+
+The library also puts it on the card line it logs once per tap, so a captured
+`logcat` identifies the library that produced it without anyone having to write
+the version into the filename:
+
+```
+TokenWithPace: card: EE IDEMIA "SeID", ATS 0012233f536549440f9000 (ID1) -> IdemiaWithPace [id-card-lib 1.2.7-internal-release]
+```
+
+That line is subject to the same `loggingEnabled` gate as everything else below;
+`IdCardLibrary.version()` is not, so an app can report the version in a crash
+report or a diagnostics screen with logging off.
 
 #### Integrator Dependencies
 
@@ -118,10 +188,10 @@ automatically. The integrator's `build.gradle.kts` must declare them explicitly:
 
 ```kotlin
 dependencies {
-    // The three AARs
-    implementation(files("libs/id-card-lib.aar"))
-    implementation(files("libs/smart-card-reader-lib.aar"))
-    implementation(files("libs/card-utils-lib.aar"))
+    // The three AARs, named as the build emits them
+    implementation(files("libs/id-card-lib-1.2.7-release.aar"))
+    implementation(files("libs/smart-card-reader-lib-1.2.7-release.aar"))
+    implementation(files("libs/card-utils-lib-1.2.7-release.aar"))
 
     // Referenced by id-card-lib + smart-card-reader-lib
     implementation("androidx.annotation:annotation:1.9.1")
@@ -303,9 +373,9 @@ The functions are defined in the `Token` interface.
 > card's own PKCS#15 metadata rather than assumed, because those values differ
 > between Latvian personalisations that share an ATS — and in one case differ from
 > the values the library would otherwise have sent. That costs a PKCS#15 walk
-> — three files, about nine APDUs — roughly 650 ms per operation, cached for the
-> session. Estonian cards skip it and
-> behave exactly as before. Neither needs anything from the caller.
+> — three files and the applet re-select, twelve APDUs — measured at 930–945 ms
+> per operation, cached for the session. Estonian cards skip it and behave exactly
+> as before. Neither needs anything from the caller.
 >
 > **What a key can sign with, as opposed to what it will.** `signatureAlgorithm(type, cert)` returns the one algorithm the library will use, and that is the one to name in a token or JWS header. `permittedAlgorithms(type, cert)` returns everything that key could sign with — usually just that one, since an EC key is fixed by its curve and an RSA key is fixed by the card whenever the card names a hash. More than one comes back only for an RSA key whose card names no hash: it signs whatever it is handed, so the PKCS#1 encoding built by this library is what fixes the algorithm, and RS256, RS384 and RS512 are equally valid. The library still uses RS256 there and requires a digest matching it — this is an answer about the card, not a setting. It shares the cache with `signatureAlgorithm`, so asking both costs no extra read.
 >

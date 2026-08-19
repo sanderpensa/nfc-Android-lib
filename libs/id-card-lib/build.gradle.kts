@@ -9,6 +9,13 @@ android {
 
     defaultConfig {
         minSdk = 24
+
+        // Only this module exposes a version — IdCardLibrary.version() — so only
+        // this module carries the constant. The value is composed in
+        // libs/build.gradle.kts from the same two values that name the AAR — the
+        // committed version and the optional local suffix — so a reported version
+        // and the file it came from cannot disagree.
+        buildConfigField("String", "LIB_VERSION", "\"${project.extra["libVersionName"]}\"")
     }
 
     compileOptions {
