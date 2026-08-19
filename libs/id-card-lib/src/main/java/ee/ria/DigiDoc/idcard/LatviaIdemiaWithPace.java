@@ -53,8 +53,33 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
 
     LatviaIdemiaWithPace(NfcSmartCardReader reader) {
         super(reader);
-        authKeyRef = (byte) 0x82;
-        signKeyRef = (byte) 0x9E;
+        // No key references set here. They would only ever be read by
+        // measuredSecurityEnvironment, which this class refuses outright — and
+        // leaving them would contradict the note below, which is the point: a
+        // Latvian value in code is a value someone can apply to the wrong card.
+    }
+
+    /**
+     * Refused, because there is nothing measured to return.
+     *
+     * <p>The inherited key references are Estonian ({@code 0x81} / {@code 0x9F}) and
+     * so are the inherited {@code MSE:SET} templates. Nothing sets Latvian ones,
+     * deliberately — see the constructor — so the inherited implementation would
+     * quietly describe an Estonian card and the card would accept it, producing a
+     * signature that verifies nowhere.
+     *
+     * <p>Unreachable today: {@link #resolveSecurityEnvironmentFromCard} returns
+     * {@code true}, so resolution never falls back here. That is exactly why this
+     * override exists — the invariant should not rest on a boolean two classes away
+     * that a later subclass could flip.
+     */
+    @Override
+    protected SecurityEnvironment measuredSecurityEnvironment(SigningOperation operation)
+            throws SecurityEnvironmentException {
+        throw new SecurityEnvironmentException(String.format(
+                "%s: there are no measured constants for Latvian cards — their algorithm"
+                        + " and key references differ between personalisations, so they are"
+                        + " read from the card or the operation is refused", operation));
     }
 
     @Override
@@ -63,27 +88,28 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
     }
 
     /**
-     * LV uses 1-byte algorithm identifiers in the MSE algorithm-reference DO,
-     * vs the 4-byte {@code FF xx xx xx} form used by Estonian IDEMIA:
-     * <ul>
-     *   <li>{@code 0x04} — ECC auth / decrypt</li>
-     *   <li>{@code 0x54} — ECC sign</li>
-     * </ul>
+     * Latvian cards are asked, always.
+     *
+     * <p>Five personalisations are on record and no static rule has survived them:
+     * the "SeID" ATS alone covers an EC card with certificates at {@code 34 02}, an
+     * EC card with them at the model's own EFs, and an RSA-2048 card with different
+     * key references. One of the EC cards uses one-byte algorithm references and
+     * another the four-byte form. No constant is right for all of them, so the card is
+     * the only source and {@link #measuredSecurityEnvironment} refuses rather than
+     * offering a fallback. Inherited by {@code LatviaIdemiaSeIdWithPace}.
      */
     @Override
-    protected byte[] authMseTemplate() {
-        return new byte[] {(byte) 0x80, 0x01, 0x04}; // ECC_AUTH_ALGO
+    protected boolean resolveSecurityEnvironmentFromCard() {
+        return true;
     }
 
-    @Override
-    protected byte[] signMseTemplate() {
-        return new byte[] {(byte) 0x80, 0x01, 0x54}; // ECC_SIGN_ALGO
-    }
-
-    @Override
-    protected byte[] decryptMseTemplate() {
-        return new byte[] {(byte) 0x80, 0x01, 0x04}; // ECC_AUTH_ALGO
-    }
+    // The MSE:SET templates that used to live here are gone deliberately. They
+    // were right for the TeID2-marked cards and wrong for at least one SeID-marked
+    // one, which uses the four-byte FF xx 08 00 form with the same key references —
+    // and no ATS tells the two apart. Latvian cards therefore read their algorithm
+    // and key references from the card (resolveSecurityEnvironmentFromCard above)
+    // and raise SecurityEnvironmentException rather than assume. The measured
+    // values, with the cards they came from, are in CARD_VARIANTS.md §4.3 and §5.
 
     /**
      * Read personal data from the auth certificate subject and EF 0x5001 (personal code).

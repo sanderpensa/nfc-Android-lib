@@ -27,6 +27,9 @@ final class TestApdus {
     static final String SEL_QSCD_AID =
             "00a4040c1051534344204170706c69636174696f6e";
 
+    /** SELECT the MAIN AID, where the library leaves the card between operations. */
+    static final String SEL_MAIN_AID = "00a4040c10a000000077010800070000fe00000100";
+
     /**
      * 48-byte SHA-384 hash that the demo NFC app hard-codes as its test
      * input — appears in every captured auth/sign session across LV, EE

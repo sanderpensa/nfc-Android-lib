@@ -36,6 +36,7 @@ public final class LatviaIdemiaPinRetryReplayTest {
     public void verifyPin1_failure_translatesToCodeVerificationException(
             int sw1, int sw2, int expectedRetries) throws Exception {
         var fixture = ReplayFixture.lv()
+                .with(LvCardMetadata::scriptOberthur)
                 .with(r -> {
                     r.expect(SEL_OBERTHUR_AID, ok());
                     r.expect("00200001" + "0c" + TestPins.WRONG_PIN1_PADDED_FF,

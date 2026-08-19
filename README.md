@@ -282,20 +282,35 @@ public interface Token {
     PersonalData personalData() throws SmartCardReaderException;
     int codeRetryCounter(CodeType type) throws SmartCardReaderException;
     byte[] certificate(CertificateType type) throws SmartCardReaderException;
+    SignatureAlgorithm signatureAlgorithm(CertificateType type, byte[] certificate) throws SmartCardReaderException;
+    Set<SignatureAlgorithm> permittedAlgorithms(CertificateType type, byte[] certificate) throws SmartCardReaderException;
     byte[] calculateSignature(byte[] pin2, byte[] hash, boolean ecc) throws SmartCardReaderException, CodeVerificationException;
     byte[] authenticate(byte[] pin1, byte[] token) throws SmartCardReaderException, CodeVerificationException;
     byte[] decrypt(byte[] pin1, byte[] data, boolean ecc) throws SmartCardReaderException, CodeVerificationException;
     void changeCode(CodeType type, byte[] currentCode, byte[] newCode) throws SmartCardReaderException, CodeVerificationException;
     void unblockAndChangeCode(byte[] pukCode, CodeType type, byte[] newCode) throws SmartCardReaderException, CodeVerificationException;
     int pinChangedFlag(CodeType type) throws SmartCardReaderException;
-    byte[] certificate(CertificateType type);
-    byte[] calculateSignature(byte[] pin2, byte[] hash, boolean ecc);
-    byte[] authenticate(byte[] pin1, byte[] token);
+    CardType cardType();
 }
 ```
 
 If the tunnel is created successfully, ID card functionality becomes available over NFC.  
+
 The functions are defined in the `Token` interface.  
+
+> **Latvian cards read a little more from the card than Estonian ones.** For
+> `LATVIA_IDEMIA`, the algorithm and key references used to sign are read from the
+> card's own PKCS#15 metadata rather than assumed, because those values differ
+> between Latvian personalisations that share an ATS — and in one case differ from
+> the values the library would otherwise have sent. That costs one extra file read
+> per operation, roughly 650 ms, cached for the session. Estonian cards skip it and
+> behave exactly as before. Neither needs anything from the caller.
+>
+> **What a key can sign with, as opposed to what it will.** `signatureAlgorithm(type, cert)` returns the one algorithm the library will use, and that is the one to name in a token or JWS header. `permittedAlgorithms(type, cert)` returns everything that key could sign with — usually just that one, since an EC key is fixed by its curve and an RSA key is fixed by the card whenever the card names a hash. More than one comes back only for an RSA key whose card names no hash: it signs whatever it is handed, so the PKCS#1 encoding built by this library is what fixes the algorithm, and RS256, RS384 and RS512 are equally valid. The library still uses RS256 there and requires a digest matching it — this is an answer about the card, not a setting. It shares the cache with `signatureAlgorithm`, so asking both costs no extra read.
+>
+> Unchanged in both cases: `calculateSignature` widens a digest shorter than the
+> curve's field to that width, `authenticate` passes your bytes through as they
+> are.
 
 Below is an example of reading the personal data file from the ID card when an instance of `NfcSmartCardReaderManager` has already been created.
 
@@ -368,6 +383,10 @@ private fun exceptionHandler(ex: SmartCardReaderException) {
         ...
     } else if (ex is CodeFormatException) {
         ...
+    } else if (ex is SignatureAlgorithmException) {
+        ...
+    } else if (ex is SecurityEnvironmentException) {
+        ...
     } else if (ex is PaceTunnelException) {
         ...
     } else if (ex is IdCardException) {
@@ -399,12 +418,19 @@ private fun exceptionHandler(ex: SmartCardReaderException) {
 * **Line 8:** `ee.ria.DigiDoc.idcard.CodeFormatException` – thrown before anything is sent to the card when a PIN or PUK is empty, or longer than the twelve-byte code field.
   Codes travel right-padded to twelve bytes, so an empty one would become twelve filler bytes: a well-formed command the card cannot tell apart from a real attempt, since the padding is applied host-side. On a verify that spends one of the user's retries; on a change or unblock the card **stores** those bytes, leaving a code no keypad can reproduce.
   Only the field's own limits are checked — minimum lengths are card policy and differ by model, so validate those in your own UI before calling.
-* **Line 10:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
+* **Line 10:** `ee.ria.DigiDoc.idcard.SignatureAlgorithmException` – thrown by `signatureAlgorithm(...)` when the library cannot sign with that certificate's key, and by the signing calls when the hash does not suit the algorithm the card named.
+  Ask `signatureAlgorithm(type, cert)` rather than deriving the algorithm from the certificate yourself: the name that goes in a JWS header or Web eID token and the algorithm reference the library puts in `MSE:SET` are two halves of one decision, and answering in one place is what keeps them in step. EC and RSA keys are both supported.
+  It is also raised after an authentication when the signature the card produced does not verify under its own certificate — which means the algorithm or key reference the card described is not what it actually signed with. That check is skipped, not failed, when no certificate has been read in the session.
+  It is raised before anything reaches the card in the first two cases, so those cost no PIN retry. For Latvian cards the algorithm and key references come from the card's own PKCS#15 metadata; Estonian cards use constants.
+* **Line 12:** `ee.ria.DigiDoc.idcard.SecurityEnvironmentException` – thrown for Latvian cards when the card will not describe its own keys.
+  Those cards' algorithm and key references differ between personalisations that share an ATS, so the library reads them from the card and refuses rather than assume — a wrong assumption is accepted by the card and produces a signature that verifies nowhere.
+  Raised before any PIN is verified, so it costs no retry. Estonian cards never raise it: they use constants by design.
+* **Line 14:** `ee.ria.DigiDoc.idcard.PaceTunnelException` – specific exception indicating that the establishment of a secure communication channel between the card and the device has failed.
   Most likely, the issue is caused by an incorrect CAN code.
-* **Line 12:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
-* **Line 14:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
-* **Line 17:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
-* **Line 19:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
+* **Line 16:** `ee.ria.DigiDoc.idcard.IdCardException` – general exception class for ID card-specific errors that don't fall into other categories.
+* **Line 18:** `ee.ria.DigiDoc.smartcardreader.ApduResponseException` – exception indicating an error in the ID card's APDU communication protocol.
+* **Line 21:** `android.nfc.TagLostException` – exception indicating that the NFC connection between the card and the device was lost.
+* **Line 23:** Any other unexpected exception that triggered the `SmartCardReaderException`.   
 
 ---
 

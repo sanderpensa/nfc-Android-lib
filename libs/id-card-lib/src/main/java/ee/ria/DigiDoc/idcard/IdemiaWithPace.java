@@ -49,6 +49,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
@@ -854,186 +855,176 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
         return new byte[] {(byte) 0x80, 0x04, (byte) 0xFF, 0x30, 0x04, 0x00};
     }
 
+    /**
+     * Estonian IDEMIA's own templates and key references.
+     *
+     * <p>Reached only because Estonian cards are not asked to describe themselves —
+     * see {@link #resolveSecurityEnvironmentFromCard}. Latvian cards never come
+     * here: their values differ between personalisations that share an ATS, so a
+     * constant would be wrong for some of them and
+     * {@link SecurityEnvironmentException} is raised instead. The Latvian values
+     * measured so far are recorded in {@code CARD_VARIANTS.md} §4.3 and §5, not in
+     * code, precisely so nobody is tempted to apply one to the wrong card.
+     *
+     * <p>Declares {@link SecurityEnvironmentException} without throwing it, so that a
+     * subclass with no measured constants can refuse here rather than inherit
+     * another card's.
+     */
+    @Override
+    protected SecurityEnvironment measuredSecurityEnvironment(SigningOperation operation)
+            throws SecurityEnvironmentException {
+        return switch (operation) {
+            case AUTHENTICATE -> new SecurityEnvironment(
+                    authMseTemplate(), authKeyRef, false, false, null,
+                    SecurityEnvironment.Source.MEASURED);
+            case SIGN -> new SecurityEnvironment(
+                    signMseTemplate(), signKeyRef, false, false, null,
+                    SecurityEnvironment.Source.MEASURED);
+            case DECRYPT -> new SecurityEnvironment(
+                    decryptMseTemplate(), authKeyRef, false, false, null,
+                    SecurityEnvironment.Source.MEASURED);
+        };
+    }
+
+    /**
+     * The algorithm this card will sign an authentication challenge with.
+     *
+     * <p>For an EC key the certificate is the whole answer — the curve implies the
+     * hash — and nothing is read from the card.
+     *
+     * <p>For an RSA key the certificate settles nothing, so the card is asked: if
+     * the key's PKCS#15 algorithm row names a hash, that is the answer and no
+     * assumption is involved. Where the row names no hash — plain
+     * {@code rsaEncryption}, which is what the 2020 Latvian card's authentication
+     * key offers — the hash is decided by which {@code DigestInfo} we go on to
+     * build, so the conventional default stands and is logged as a choice.
+     *
+     * <p>Refuses in one case that no card reaches: when
+     * {@link #permittedAlgorithms(CertificateType, byte[])} allows several algorithms
+     * and the default is not among them, there is nothing this method could both use
+     * and report, so it raises {@link SignatureAlgorithmException} rather than name an
+     * algorithm the key will not sign with. Reachable only by a subclass narrowing
+     * what a key permits; it is checked because {@link Token} promises the answer is
+     * always a member of that set, and a promise nothing enforces is one that fails
+     * quietly.
+     */
+    @Override
+    public SignatureAlgorithm signatureAlgorithm(CertificateType type, byte[] certificate)
+            throws SmartCardReaderException {
+        Set<SignatureAlgorithm> permitted = permittedAlgorithms(type, certificate);
+        if (permitted.size() == 1) {
+            return permitted.iterator().next();
+        }
+
+        // More than one is permitted only where the card named no hash, and then the
+        // choice is this library's. Taken from the same place the digest-length check
+        // takes it, so the two cannot disagree.
+        SignatureAlgorithm ours = SignatureAlgorithm.forRsaKey();
+        if (!permitted.contains(ours)) {
+            // Unreachable while the only plural answer is the RSA set. Checked because
+            // the Token contract promises this answer is a member of that set, and a
+            // subclass narrowing permittedAlgorithms could otherwise break the promise
+            // silently — the symptom would be a token whose named algorithm is not
+            // what the card signed with, which is what this whole path exists to avoid.
+            throw new SignatureAlgorithmException(String.format(
+                    "%s key: the card permits %s, none of which is the %s this library"
+                            + " would choose, so there is no algorithm it can both use and"
+                            + " report", type, permitted, ours.jwaName()));
+        }
+        LoggingUtil.Companion.debugLog(TAG, String.format(
+                "the card named no hash for its %s key, so %s is our choice out of %s —"
+                        + " the DigestInfo we build is what fixes it",
+                type, ours.jwaName(), permitted), null);
+        return ours;
+    }
+
+    /**
+     * Asks the card, which is the whole point: on this card model what a key can sign
+     * with does not follow from the certificate, and on the Latvian ones it does not
+     * follow from the model either.
+     */
+    @Override
+    public Set<SignatureAlgorithm> permittedAlgorithms(CertificateType type,
+                                                       byte[] certificate)
+            throws SmartCardReaderException {
+        SignatureAlgorithm fromCertificate = SignatureAlgorithm.forCertificate(certificate);
+        if (!fromCertificate.isRsa()) {
+            // The curve fixes both the hash and the reference; there is nothing to ask.
+            return SignatureAlgorithm.only(fromCertificate);
+        }
+
+        SignatureAlgorithm named = cardNamedAlgorithm(SigningOperation.signingWith(type));
+        if (named != null && named.isRsa()) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "the card names %s for its %s key", named.jwaName(), type), null);
+            return SignatureAlgorithm.only(named);
+        }
+        return SignatureAlgorithm.rsaAlgorithms();
+    }
+
+    /**
+     * What the card names for an operation's key, resolving the environment if it
+     * has not been already. Leaves the card on the MAIN AID, since this is called
+     * between reads rather than inside an operation.
+     */
+    private SignatureAlgorithm cardNamedAlgorithm(SigningOperation operation) {
+        try {
+            selectAppletContext(operation.context);
+            SignatureAlgorithm named = securityEnvironment(operation).namedAlgorithm();
+            selectMainAid();
+            return named;
+        } catch (Exception e) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "could not ask the card which algorithm its %s key uses (%s)",
+                    operation, e), null);
+            return null;
+        }
+    }
+
     @Override
     public byte[] authenticate(byte[] pin1, byte[] token) throws SmartCardReaderException {
         selectOberthurAid();
+        SecurityEnvironment environment =
+                securityEnvironment(SigningOperation.AUTHENTICATE);
         verifyCode(CodeType.PIN1, pin1);
-        byte keyRef = getAuthKeyRef();
-        byte[] template = authMseTemplate();
-        byte[] body = concat(template, new byte[] {(byte) 0x84, 0x01, keyRef});
 
-        LoggingUtil.Companion.debugLog(TAG,
-            String.format("MSE SET auth: template=%s, keyRef=0x%02x",
-                Hex.toHexString(template), keyRef & 0xFF),
-            null
-        );
+        reader.transmit(0x00, 0x22, 0x41, SigningOperation.AUTHENTICATE.mseSetP2,
+                environment.mseSetBody(), null);
+        byte[] input = authenticationInput(token, environment);
+        byte[] signature = reader.transmit(0x00, 0x88, 0x00, 0x00, input, 0x00);
 
-        reader.transmit(0x00, 0x22, 0x41, 0xA4, body, null);
-        return reader.transmit(0x00, 0x88, 0x00, 0x00, token, 0x00);
+        // Checked here and not in calculateSignature: authentication callers have
+        // already read the certificate, signing callers have not, and reading one
+        // there costs about a second. See CARD_VARIANTS.md §8.4.
+        verifySignature(SigningOperation.AUTHENTICATE, environment, input, signature);
+        return signature;
     }
 
     @Override
     public byte[] calculateSignature(byte[] pin2, byte[] hash, boolean ecc) throws SmartCardReaderException {
         selectQSCDAid();
+        SecurityEnvironment environment =
+                securityEnvironment(SigningOperation.SIGN);
         verifyCode(CodeType.PIN2, pin2);
-        byte keyRef = getSignKeyRef();
-        byte[] template = signMseTemplate();
-        byte[] body = concat(template, new byte[] {(byte) 0x84, 0x01, keyRef});
 
-        LoggingUtil.Companion.debugLog(TAG,
-            String.format("MSE SET sign: template=%s, keyRef=0x%02x",
-                Hex.toHexString(template), keyRef & 0xFF),
-            null
-        );
-
-        reader.transmit(0x00, 0x22, 0x41, 0xB6, body, null);
-        return reader.transmit(0x00, 0x2A, 0x9E, 0x9A, padWithZeroes(hash), 0x00);
+        reader.transmit(0x00, 0x22, 0x41, SigningOperation.SIGN.mseSetP2,
+                environment.mseSetBody(), null);
+        return reader.transmit(0x00, 0x2A, 0x9E, 0x9A,
+                signingInput(hash, environment), 0x00);
     }
 
     @Override
     public byte[] decrypt(byte[] pin1, byte[] data, boolean ecc) throws SmartCardReaderException {
         selectOberthurAid();
+        SecurityEnvironment environment =
+                securityEnvironment(SigningOperation.DECRYPT);
         verifyCode(CodeType.PIN1, pin1);
-        byte keyRef = getAuthKeyRef();
-        byte[] template = decryptMseTemplate();
-        byte[] body = concat(template, new byte[] {(byte) 0x84, 0x01, keyRef});
 
-        LoggingUtil.Companion.debugLog(TAG,
-            String.format("MSE SET decrypt: template=%s, keyRef=0x%02x",
-                Hex.toHexString(template), keyRef & 0xFF),
-            null
-        );
-
-        reader.transmit(0x00, 0x22, 0x41, 0xB8, body, null);
+        reader.transmit(0x00, 0x22, 0x41, SigningOperation.DECRYPT.mseSetP2,
+                environment.mseSetBody(), null);
+        // Decipher takes the cryptogram with its leading padding indicator, not a
+        // hash, so it is passed through untouched.
         return reader.transmit(0x00, 0x2A, 0x80, 0x86, concat(new byte[] {0x00}, data), 0x00);
-    }
-
-    /**
-     * Get the authentication key reference. If null, attempts dynamic discovery from PrKDF.
-     * Cached after first read.
-     */
-    protected byte getAuthKeyRef() throws SmartCardReaderException {
-        if (authKeyRef == null) {
-            byte ref = readKeyRefFromCurrentContext();
-            if (ref != 0) {
-                authKeyRef = ref;
-                LoggingUtil.Companion.debugLog(TAG,
-                    String.format("PrKDF auth key ref discovered: 0x%02x", authKeyRef & 0xFF),
-                    null
-                );
-            } else {
-                throw new SmartCardReaderException("Auth key reference not found in PrKDF");
-            }
-        }
-
-        return authKeyRef;
-    }
-
-    /**
-     * Get the signing key reference. If null, attempts dynamic discovery from PrKDF.
-     * Cached after first read.
-     */
-    protected byte getSignKeyRef() throws SmartCardReaderException {
-        if (signKeyRef == null) {
-            byte ref = readKeyRefFromCurrentContext();
-            if (ref != 0) {
-                signKeyRef = ref;
-                LoggingUtil.Companion.debugLog(TAG,
-                    String.format("PrKDF sign key ref discovered: 0x%02x", signKeyRef & 0xFF),
-                    null
-                );
-            } else {
-                throw new SmartCardReaderException("Sign key reference not found in PrKDF");
-            }
-        }
-
-        return signKeyRef;
-    }
-
-    /**
-     * Read the first private key reference from the PrKDF in the currently selected AID context.
-     *
-     * Flow (matching Web eID libelectronic-id):
-     * 1. Select and read EF_OD (0x5031) — Object Directory File
-     * 2. Find tag 0xA0 (private key dir ref) → extract PrKDF file ID
-     * 3. Read PrKDF file
-     * 4. Return first keyReference INTEGER found
-     *
-     * @return key reference byte, or 0 if not found
-     */
-    private byte readKeyRefFromCurrentContext() throws SmartCardReaderException {
-        // Read EF_OD (Object Directory File at 0x5031)
-        reader.transmit(0x00, 0xA4, 0x02, 0x0C, new byte[] {0x50, 0x31}, null);
-        byte[] efOd = readBinaryFile();
-
-        // Find tag 0xA0 (private key directory reference)
-        List<TLV> odEntries = TLV.parseAll(efOd);
-        TLV privKeyDir = TLV.findByTag(odEntries, 0xA0);
-        if (privKeyDir == null || privKeyDir.children == null) {
-            return 0;
-        }
-
-        // Navigate: A0 → 30 → 04 to get PrKDF file ID
-        TLV seq = privKeyDir.findByTag(0x30);
-        if (seq == null) {
-            return 0;
-        }
-        TLV fileIdTlv = seq.findByTag(0x04);
-        if (fileIdTlv == null || fileIdTlv.getValue().length != 2) {
-            return 0;
-        }
-
-        // Select and read PrKDF
-        byte[] fileId = fileIdTlv.getValue();
-        reader.transmit(0x00, 0xA4, 0x02, 0x0C, fileId, null);
-        byte[] prKdfData = readBinaryFile();
-
-        // Parse PrKDF entries and return first key reference found
-        List<TLV> keyEntries = TLV.parseAll(prKdfData);
-        for (TLV entry : keyEntries) {
-            if (entry.children == null || entry.children.size() < 2) {
-                continue;
-            }
-            byte keyRef = extractKeyReference(entry);
-            if (keyRef != 0) {
-                return keyRef;
-            }
-        }
-        return 0;
-    }
-
-    /**
-     * Extract key reference from a PKCS#15 PrivateKeyType entry.
-     *
-     * Structure: SEQUENCE { CommonObjectAttributes, CommonKeyAttributes, TypeAttributes }
-     * CommonKeyAttributes contains: iD, usage, ..., keyReference (INTEGER)
-     *
-     * In DER, key refs >= 0x80 are encoded as 2-byte INTEGERs (e.g., 02 02 00 82).
-     */
-    protected static byte extractKeyReference(TLV entry) {
-        if (entry.children == null || entry.children.size() < 2) {
-            return 0;
-        }
-
-        // Second child SEQUENCE = CommonKeyAttributes
-        TLV commonKeyAttrs = entry.children.get(1);
-        if (commonKeyAttrs.children == null) {
-            return 0;
-        }
-
-        // Find INTEGER (tag 0x02) — this is the keyReference
-        for (TLV child : commonKeyAttrs.children) {
-            if (child.getTag() == 0x02) {
-                byte[] val = child.getValue();
-                if (val.length == 2) {
-                    // 2-byte DER INTEGER (e.g., 00 82 → key ref 0x82)
-                    return val[1];
-                } else if (val.length == 1) {
-                    return val[0];
-                }
-            }
-        }
-        return 0;
     }
 
     /**

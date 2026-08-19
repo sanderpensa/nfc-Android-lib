@@ -158,6 +158,13 @@ class CardReaderFragment : Fragment() {
                     // Get auth certificate
                     val authCert = card.certificate(CertificateType.AUTHENTICATION)
                     debugLog(logTag, Base64.toBase64String(authCert))
+
+                    // Ask once and use the answer for both the name and the hash.
+                    // Hardcoding a digest here would be the exact drift this API
+                    // exists to prevent: on an RSA card it reports RS256 while a
+                    // SHA-384 hash goes to the card.
+                    val signatureAlgorithm = card.signatureAlgorithm(CertificateType.AUTHENTICATION, authCert)
+                    debugLog(logTag, "signature algorithm: " + signatureAlgorithm.jwaName())
                     val pin1 = arguments?.getByteArray("pin1")
 
                     // NB! This is mock authentication, we are only interested in the correct
@@ -179,7 +186,7 @@ class CardReaderFragment : Fragment() {
                     debugLog(logTag, String.format("ORIGIN %s, %s", origin, Hex.toHexString(originHash)))
 
                     val tbsData = originHash + nonceHash
-                    val tbsHash = MessageDigest.getInstance("SHA-384").digest(tbsData)
+                    val tbsHash = signatureAlgorithm.digest().digest(tbsData)
 
                     // Use PIN1 to sign created challenge-response
                     val signedHash = card.authenticate(pin1, tbsHash)

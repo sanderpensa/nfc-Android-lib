@@ -50,6 +50,27 @@ final class ApduReplayReader {
         expectations.computeIfAbsent(capduHex, k -> new ArrayDeque<>()).add(outcome);
     }
 
+    /**
+     * Scripts a whole file read: SELECT by file id, the {@code READ BINARY} calls
+     * the library makes at 231-byte offsets, then {@code 6B 00} past the end.
+     *
+     * <p>Here rather than in each fixture because five of them had grown their own
+     * copy of this loop, and an off-by-one in any one of them would have looked like
+     * a library bug.
+     */
+    void expectFileRead(String fileId, String content) {
+        expect("00a4020c02" + fileId, ok());
+        int length = content.length() / 2;
+        int offset = 0;
+        while (offset < length) {
+            int chunk = Math.min(231, length - offset);
+            expect(String.format("00b0%02x%02x00", offset >> 8, offset & 0xFF),
+                    bytes(content.substring(offset * 2, (offset + chunk) * 2)));
+            offset += chunk;
+        }
+        expect(String.format("00b0%02x%02x00", offset >> 8, offset & 0xFF), err6B00());
+    }
+
     /** Returns C-APDUs that were in the fixture but never sent. */
     Map<String, Integer> unconsumed() {
         HashMap<String, Integer> leftover = new HashMap<>();

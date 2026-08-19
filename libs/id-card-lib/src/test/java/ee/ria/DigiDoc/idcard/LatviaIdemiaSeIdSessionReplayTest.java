@@ -35,20 +35,7 @@ import java.util.Arrays;
  */
 public final class LatviaIdemiaSeIdSessionReplayTest {
 
-    private static final String SELECT_MAIN_AID =
-            "00a4040c10a000000077010800070000fe00000100";
-    private static final String SELECT_OBERTHUR_AID =
-            "00a4040c0de828bd080ff2504f5420415750";
-
-    /**
-     * The hash the demo app asked the card to sign, and the 96-byte
-     * ECDSA-P384 {@code r || s} it answered with. Both from the same capture as
-     * the certificate.
-     */
-    private static final String CAPTURED_AUTH_HASH =
-            "592339cef290ada30eac71d4cbb0420b479c1a0936fe0225a0fbc6dc2e51ff58"
-                    + "cfd5add29772de4368eb1b024f1cbc8a";
-    private static final String CAPTURED_AUTH_SIGNATURE =
+    static final String CAPTURED_AUTH_SIGNATURE =
             "ab30b4c15f38bb6cd99b21a7ddec2c11d2eea3c969c07c225ae9ed4e5f8ab9ff"
                     + "265b8a567393b1cc24251d250930ddf3d4c479ea87a44cd980143fd1b7d9efb0"
                     + "1feba78de1f89e1d69b14d7430ea19ae6a14ec352019940a2633b156c91e9dbe";
@@ -56,24 +43,28 @@ public final class LatviaIdemiaSeIdSessionReplayTest {
     @Test
     public void certificateThenAuthenticate_replaysOneSeIdTap() throws Exception {
         var fixture = ReplayFixture.lvSeid()
+                // Order matters here: the certificate read and the PKCS#15 reads
+                // both use READ BINARY from offset 0, and the reader queues per
+                // APDU, so these have to be declared in the order they happen.
                 .with(LatviaIdemiaCertLookupReplayTest::loadSeidAuthCertRead)
+                .with(LvCardMetadata::scriptOberthur)
                 .with(r -> {
                     // Straight into the auth flow — the cert read above left the
                     // card on MAIN, which is what this SELECT assumes.
-                    r.expect(SELECT_OBERTHUR_AID, ok());
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
                     r.expect("00200001" + "0c" + TestPins.PIN1_PADDED_FF, ok());
                     r.expect("002241a4" + "06" + "800104" + "840182", ok());
-                    r.expect("00880000" + "30" + CAPTURED_AUTH_HASH + "00",
+                    r.expect("00880000" + "30" + TestApdus.CAPTURED_AUTH_HASH + "00",
                             bytes(CAPTURED_AUTH_SIGNATURE));
                 })
                 .tunnel();
 
         byte[] certificate = fixture.token.certificate(CertificateType.AUTHENTICATION);
         byte[] signature = fixture.token.authenticate(
-                TestPins.PIN1, Hex.decode(CAPTURED_AUTH_HASH));
+                TestPins.PIN1, Hex.decode(TestApdus.CAPTURED_AUTH_HASH));
 
         assertThat(Hex.toHexString(signature)).isEqualTo(CAPTURED_AUTH_SIGNATURE);
-        assertSignedBy(certificate, Hex.decode(CAPTURED_AUTH_HASH), signature);
+        assertSignedBy(certificate, Hex.decode(TestApdus.CAPTURED_AUTH_HASH), signature);
         fixture.assertAllConsumed();
     }
 

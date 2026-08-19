@@ -21,6 +21,8 @@ package ee.ria.DigiDoc.idcard;
 
 import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 
+import java.util.Set;
+
 /**
  * EstEID token interface.
  */
@@ -89,6 +91,94 @@ public interface Token {
      * @throws SmartCardReaderException When reading failed.
      */
     byte[] certificate(CertificateType type) throws SmartCardReaderException;
+
+    /**
+     * The signature algorithm this token will sign a hash for {@code certificate}
+     * with — the JWA name for a token or JWS header, and the hash to compute.
+     *
+     * <p>Ask this rather than deriving it from the certificate yourself. The
+     * name that goes in a token and the algorithm reference this library puts in
+     * {@code MSE:SET} are two halves of one decision, and they have to agree;
+     * answering here is what keeps them from drifting apart. Pass the bytes
+     * {@link #certificate(CertificateType)} already returned.
+     *
+     * <p><b>Card I/O:</b> none for an EC key — the curve settles it. For an RSA key
+     * the certificate settles nothing, so the card is asked which hash that key
+     * signs with: one PKCS#15 read, roughly 650 ms, cached for the session, and it
+     * leaves the card on the MAIN AID. That is why this declares
+     * {@code SmartCardReaderException}.
+     *
+     * <p>Implementations whose card supports a different set of algorithms
+     * override this. The default answers from the certificate alone, which is
+     * correct for every card model currently supported.
+     *
+     * @param type Which of the card's keys this is about. Required because a card's
+     *             two keys can name different algorithms — on one Latvian card the
+     *             signing key names SHA-256 while the authentication key names no
+     *             hash at all — so the certificate bytes alone do not say which
+     *             question is being asked.
+     * @param certificate DER-encoded certificate of that key, as returned by
+     *                    {@link #certificate(CertificateType)}.
+     * @return The algorithm to name and the hash to compute.
+     * @throws SignatureAlgorithmException When this token cannot sign with that
+     *                                     certificate's key.
+     */
+    default SignatureAlgorithm signatureAlgorithm(CertificateType type, byte[] certificate)
+            throws SmartCardReaderException {
+        return SignatureAlgorithm.forCertificate(certificate);
+    }
+
+    /**
+     * Every algorithm this key could sign with, of which
+     * {@link #signatureAlgorithm(CertificateType, byte[])} returns the one that will
+     * be used. That one is always a member of this set.
+     *
+     * <p>Usually a single element, and then it is not a choice at all: an EC key is
+     * fixed by its curve, and an RSA key whose card names a hash
+     * ({@code sha256WithRSAEncryption}) is fixed by the card, which builds the PKCS#1
+     * encoding itself.
+     *
+     * <p>More than one element means the card named no hash for this key — it applies
+     * {@code m^d mod n} to whatever it is given, so what fixes the algorithm is the
+     * {@code DigestInfo} this library builds, and every member is equally valid. One
+     * such key is on record: the authentication key of the 2020 Latvian card, whose
+     * row offers only raw {@code rsaEncryption}.
+     *
+     * <p><b>This is an answer, not a setting.</b> The signing calls take no algorithm
+     * argument, so the library uses
+     * {@link #signatureAlgorithm(CertificateType, byte[])} regardless of what else is
+     * permitted, and requires a digest matching it. Hashing with SHA-384 because
+     * RS384 appears here would produce a valid signature labelled RS256 — so it is
+     * refused. What this is for is telling you what a key can do, on a card
+     * population where that has repeatedly turned out not to follow from the model.
+     *
+     * <p><b>Overriding:</b> override both this and
+     * {@link #signatureAlgorithm(CertificateType, byte[])}, or neither. This default
+     * answers in terms of {@code signatureAlgorithm}, and an implementation that knows
+     * what a key permits naturally answers {@code signatureAlgorithm} in terms of this
+     * — {@code IdemiaWithPace} does — so overriding one alone can close a loop that
+     * only shows up as a {@code StackOverflowError} at run time.
+     *
+     * <p><b>Card I/O:</b> the same as
+     * {@link #signatureAlgorithm(CertificateType, byte[])}, and shares its cache —
+     * asking both costs no second read. An answer here is not a promise that signing
+     * will succeed: a card that will not describe its keys refuses the operation
+     * itself, and this reports what such a key could encode either way.
+     *
+     * @param type Which of the card's keys this is about.
+     * @param certificate DER-encoded certificate of that key, as returned by
+     *                    {@link #certificate(CertificateType)}.
+     * @return An unmodifiable, non-empty set, iterating in {@link SignatureAlgorithm}
+     *         declaration order — every implementation builds it from an
+     *         {@code EnumSet}, which is what makes that true rather than incidental.
+     * @throws SignatureAlgorithmException When this token cannot sign with that
+     *                                     certificate's key.
+     */
+    default Set<SignatureAlgorithm> permittedAlgorithms(CertificateType type,
+                                                        byte[] certificate)
+            throws SmartCardReaderException {
+        return SignatureAlgorithm.only(signatureAlgorithm(type, certificate));
+    }
 
     /**
      * Calculate electronic signature with pre-calculated hash.

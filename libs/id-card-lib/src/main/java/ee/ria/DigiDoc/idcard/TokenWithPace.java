@@ -112,7 +112,7 @@ public interface TokenWithPace extends Token {
             throw new NotSupportedException("Card type " + detected + " not in allowed config " + allowed);
         }
 
-        return switch (detected) {
+        TokenWithPace token = switch (detected) {
             case ID1 -> new IdemiaWithPace(reader);
             case THALES -> new ThalesWithPace(reader);
             // Both LV markings are one CardType, but they differ in where they
@@ -123,6 +123,45 @@ public interface TokenWithPace extends Token {
                     ? new LatviaIdemiaSeIdWithPace(reader)
                     : new LatviaIdemiaWithPace(reader);
         };
+
+        // Worth one line per tap: working out which card produced a log by
+        // comparing certificate sizes against notes is slow and easy to get
+        // wrong. Marking, type and implementation together say it outright.
+        LoggingUtil.Companion.debugLog(TAG, String.format(
+                "card: %s (%s) -> %s", marking(atr), detected,
+                token.getClass().getSimpleName()), null);
+        return token;
+    }
+
+    /**
+     * The product marking in the ATS historical bytes, for the log.
+     *
+     * <p>Names the card, not its personalisation, and the difference matters: a
+     * marking is not a promise about layout or keys. The Latvian "SeID" ATS covers
+     * both an EC card whose certificates sit at {@code 34 02} and an RSA-2048 card
+     * from 2020 whose certificates are at the model's own EFs with different key
+     * references. So read this as "which ATS answered", and the certificate and
+     * security-environment lines for what the card turned out to be.
+     */
+    static String marking(byte[] atr) {
+        if (atr == null) {
+            return "unknown card (no ATS)";
+        }
+        String name;
+        if (Arrays.equals(ATS_EE_IDEMIA_SEID, atr)) {
+            name = "EE IDEMIA \"SeID\"";
+        } else if (Arrays.equals(ATS_EE_IDEMIA_TEID2, atr)) {
+            name = "EE IDEMIA \"TeID2\"";
+        } else if (Arrays.equals(ATS_EE_THALES, atr)) {
+            name = "EE Thales";
+        } else if (Arrays.equals(ATS_LV_IDEMIA_SEID, atr)) {
+            name = "LV IDEMIA \"SeID\"";
+        } else if (Arrays.equals(ATS_LV_IDEMIA_TEID2, atr)) {
+            name = "LV IDEMIA \"TeID2\"";
+        } else {
+            name = "unrecognised marking";
+        }
+        return name + ", ATS " + Hex.toHexString(atr);
     }
 
     private static CardType detectCardType(byte[] atr) throws NotSupportedException {

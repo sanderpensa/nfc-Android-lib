@@ -66,6 +66,9 @@ abstract class Idemia implements Token {
      */
     private static final byte[] EF_OD = new byte[] {0x50, 0x31};
 
+    /** PKCS#15 EF.TokenInfo, which carries {@code supportedAlgorithms}. */
+    private static final byte[] EF_TOKEN_INFO = new byte[] {0x50, 0x32};
+
     /** ODF context-specific tag for the certificate directory ({@code [4]}). */
     private static final int PKCS15_TAG_CERTIFICATES = 0xA4;
 
@@ -114,6 +117,37 @@ abstract class Idemia implements Token {
      * per card session.
      */
     private final Map<CertificateType, byte[]> pkcs15CertificateFiles =
+            new EnumMap<>(CertificateType.class);
+
+    /**
+     * Security environments resolved for this card, one per operation. Resolving
+     * costs a PKCS#15 walk, so it is done once per operation per session.
+     */
+    private final Map<SigningOperation, SecurityEnvironment> securityEnvironments =
+            new EnumMap<>(SigningOperation.class);
+
+    /**
+     * The card's algorithm table. Both applets of every card seen so far publish
+     * the same one — it describes what the platform can do, not what one applet
+     * holds — so it is read once and shared. An empty result is not cached as an
+     * answer, so a card that only exposes it under one applet still works.
+     */
+    private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable;
+
+    /**
+     * Whether resolving the security environment got as far as selecting a file.
+     * If it did not — a card with no EF.TokenInfo answers {@code 6A 82} to the
+     * very first SELECT — the applet is still current and needs no restoring.
+     */
+    private boolean walkSelectedAnEf;
+
+    /**
+     * Certificates read this session, by type. Kept so an authentication signature
+     * can be checked against the key that was supposed to produce it — see
+     * {@link SignatureVerifier}. Only what a caller has already asked for is here;
+     * nothing is read on its account.
+     */
+    private final Map<CertificateType, byte[]> certificates =
             new EnumMap<>(CertificateType.class);
 
     Idemia(SmartCardReader reader) {
@@ -221,13 +255,16 @@ abstract class Idemia implements Token {
                 try {
                     byte[] certificate = readCertificateAt(location, type);
                     if (certificate != null && looksLikeDerCertificate(certificate)) {
-                        if (i > 0) {
-                            LoggingUtil.Companion.debugLog(TAG, String.format(
-                                    "certificate(%s): %s holds no certificate; read"
-                                            + " %d bytes from %s instead",
-                                    type, locations.get(0), certificate.length,
-                                    location), null);
-                        }
+                        certificates.put(type, certificate);
+                        // Always logged, not only on a fallback: the EF and the
+                        // size are what identify a personalisation. 1182 bytes at
+                        // AD F1 34 01 is one Latvian card, 1156 at 34 02 another,
+                        // 1710 a third — and the ATS does not tell them apart.
+                        LoggingUtil.Companion.debugLog(TAG, String.format(
+                                "certificate(%s): read %d bytes from %s%s",
+                                type, certificate.length, location,
+                                i > 0 ? String.format(" (%s held none)",
+                                        locations.get(0)) : ""), null);
                         return certificate;
                     }
                     tried.add(location + (certificate == null
@@ -260,6 +297,7 @@ abstract class Idemia implements Token {
             leftMainAid = true;
             byte[] discovered = readCertificateViaPkcs15(type);
             if (discovered != null) {
+                certificates.put(type, discovered);
                 return discovered;
             }
             tried.add("the PKCS#15 certificate directory (named none)");
@@ -350,6 +388,341 @@ abstract class Idemia implements Token {
             LoggingUtil.Companion.debugLog(TAG, String.format(
                     "certificate(%s): could not re-select MAIN AID after the"
                             + " certificate lookup (%s)", type, e), null);
+        }
+    }
+
+    /**
+     * Everything the {@code MSE:SET} for an operation needs — the algorithm
+     * reference and the key reference — preferring what the card says about
+     * itself and falling back to the constants measured from real cards.
+     *
+     * <p>The card is asked first because it is the only source that can be right
+     * for a personalisation nobody has seen. Two Latvian cards share an ATS while
+     * using different key references, so no amount of model detection can pick
+     * between them; the key directory can. That costs a PKCS#15 walk — about nine
+     * APDUs, once per operation per session.
+     *
+     * <p>It falls back rather than failing, because a card that answers something
+     * unexpected must not become a card that cannot sign. Whatever happens, the
+     * caller is left on the applet the operation needs.
+     */
+    SecurityEnvironment securityEnvironment(SigningOperation operation)
+            throws SmartCardReaderException {
+        SecurityEnvironment cached = securityEnvironments.get(operation);
+        if (cached != null) {
+            return cached;
+        }
+
+        walkSelectedAnEf = false;
+        SecurityEnvironment resolved;
+        if (resolveSecurityEnvironmentFromCard()) {
+            resolved = securityEnvironmentFromCard(operation);
+            if (walkSelectedAnEf) {
+                // The walk left an EF selected; put the applet back the way the
+                // caller had it, on the way out and on the way to the throw alike
+                // — a caller that catches and carries on must not inherit a
+                // half-walked card. Skipped when nothing was read, so a card
+                // without TokenInfo costs one APDU rather than three.
+                selectAppletContext(operation.context);
+            }
+            if (resolved == null) {
+                // No fallback here on purpose — see SecurityEnvironmentException.
+                // Nothing has been staged and no PIN verified, so this costs the
+                // user nothing but an error.
+                throw new SecurityEnvironmentException(String.format(
+                        "%s: this card did not describe its keys, and a card of this model"
+                                + " cannot be signed for on assumptions — its algorithm and"
+                                + " key references differ between personalisations",
+                        operation));
+            }
+        } else {
+            resolved = measuredSecurityEnvironment(operation);
+        }
+        LoggingUtil.Companion.debugLog(TAG, String.format("%s: %s", operation, resolved), null);
+        securityEnvironments.put(operation, resolved);
+        return resolved;
+    }
+
+    /**
+     * Whether to read this card's own description of its keys rather than use the
+     * constants measured for the model.
+     *
+     * <p>Off by default, which is the Estonian answer. Their layout is documented
+     * and one pair of key references — {@code 0x81} / {@code 0x9F} — has served
+     * every marking in the field, so a walk there protects against a variation
+     * nobody has seen while costing ~650 ms per operation on a tap that can be lost
+     * for being slow. Latvian cards turn it on, and have every reason to: five
+     * personalisations, two of them behind one ATS, with key references, algorithm
+     * reference widths and even key types varying between them.
+     *
+     * <p>The machinery is model-independent and works on Estonian cards — an EE
+     * capture on 2026-08-18 resolved from metadata and reproduced both constants
+     * exactly — so this is one boolean if an unknown Estonian personalisation ever
+     * appears. See {@code CARD_VARIANTS.md} §8.
+     */
+    protected boolean resolveSecurityEnvironmentFromCard() {
+        return false;
+    }
+
+    /**
+     * The card's own answer, or {@code null} when it does not give one. Never
+     * throws: every failure here is a reason to fall back, not to fail.
+     */
+    private SecurityEnvironment securityEnvironmentFromCard(SigningOperation operation) {
+        try {
+            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table = algorithmTable();
+            if (table.isEmpty()) {
+                return null;
+            }
+            byte[] objectDirectory = readEf(EF_OD);
+            byte[] directoryId = Pkcs15SecurityEnvironment.privateKeyDirectoryId(objectDirectory);
+            if (directoryId == null) {
+                return null;
+            }
+            List<Pkcs15SecurityEnvironment.Key> keys =
+                    Pkcs15SecurityEnvironment.keys(readEf(directoryId));
+            return firstUsableEnvironment(operation, keys, table);
+        } catch (Exception e) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: could not read the card's key description (%s)", operation, e), null);
+            return null;
+        }
+    }
+
+    /**
+     * The first key that declares an algorithm able to perform this operation.
+     * Both cards seen have exactly one key per applet; the loop is for the card
+     * that does not.
+     */
+    private SecurityEnvironment firstUsableEnvironment(
+            SigningOperation operation, List<Pkcs15SecurityEnvironment.Key> keys,
+            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table) {
+        for (Pkcs15SecurityEnvironment.Key key : keys) {
+            if (!key.isUsable()) {
+                continue;
+            }
+            for (Integer entry : key.algorithmEntries) {
+                Pkcs15SecurityEnvironment.Algorithm algorithm = table.get(entry);
+                if (algorithm == null || !algorithm.supports(operation.operationMask)) {
+                    continue;
+                }
+                if (key.rsa && !algorithm.rsaEncodingIsUnderstood()) {
+                    // The row names a hash this library does not know, and for RSA
+                    // the card builds the PKCS#1 encoding from that hash. Using it
+                    // would mean sending a digest of one kind and having it encoded
+                    // as another — a signature that verifies nowhere. Skip the row;
+                    // another may serve.
+                    LoggingUtil.Companion.debugLog(TAG, String.format(
+                            "%s: skipping entry 0x%02x, its algorithm (%s) is one this"
+                                    + " library cannot encode for",
+                            operation, entry, algorithm.oid), null);
+                    continue;
+                }
+                return new SecurityEnvironment(algorithm.mseSetObject(), key.keyReference,
+                        key.rsa, algorithm.needsHostDigestInfo(),
+                        SignatureAlgorithm.forOid(algorithm.oid),
+                        SecurityEnvironment.Source.CARD);
+            }
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: %s declares no algorithm that can do it", operation, key), null);
+        }
+        return null;
+    }
+
+    /** EF.TokenInfo's algorithm table, read once per session. */
+    private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable()
+            throws SmartCardReaderException {
+        if (algorithmTable != null && !algorithmTable.isEmpty()) {
+            return algorithmTable;
+        }
+        algorithmTable = Pkcs15SecurityEnvironment.algorithms(readEf(EF_TOKEN_INFO));
+        return algorithmTable;
+    }
+
+    /**
+     * Checks a signature against the certificate of the key that made it, when that
+     * certificate has already been read.
+     *
+     * <p>Never fails a tap for being unable to look: no certificate read this
+     * session, an unparseable one, or a platform lacking the algorithm all log and
+     * carry on.
+     *
+     * <p>A genuine mismatch is fatal only when the environment came from the card
+     * itself. That is where the risk is — the card described its own key and the
+     * description can be wrong, as the 2020 Latvian algorithm table shows, and a
+     * signature made under a wrong description verifies nowhere. Refusing it locally
+     * turns a confusing rejection by the relying party into a clear error here.
+     *
+     * <p>Where the environment came from constants this library measured
+     * ({@link SecurityEnvironment.Source#MEASURED}, i.e. Estonian cards), a mismatch
+     * is reported at error level and the signature is returned. Those constants have
+     * worked on every Estonian card for years, so a mismatch reported here is far
+     * likelier to be this check than the card — an unavailable JCA algorithm, a
+     * provider disagreeing about signature encoding — and this may not be the thing
+     * that breaks a flow that works. No Estonian capture that reads a certificate and
+     * then authenticates exists yet to prove otherwise; until one does, the check
+     * earns its place there by reporting, not by refusing.
+     *
+     * <p><b>That report is only as good as the host's logging.</b> Every level in
+     * {@code LoggingUtil}, error included, is suppressed unless the consuming app
+     * called {@code initialize(..., loggingEnabled = true)} — so in a build with
+     * logging off this branch returns a signature it believes is wrong and records
+     * nothing. Reporting is the whole justification for not refusing, so an app that
+     * wants the finding must enable logging; an app that cannot should be given the
+     * fail-closed behaviour instead, which today means a library change rather than a
+     * setting.
+     */
+    void verifySignature(SigningOperation operation, SecurityEnvironment environment,
+                         byte[] inputSent, byte[] signature)
+            throws SignatureAlgorithmException {
+        byte[] certificate = certificates.get(operation.certificateType);
+        if (certificate == null) {
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: no %s certificate was read this session, so the signature is not"
+                            + " checked locally", operation, operation.certificateType), null);
+            return;
+        }
+
+        SignatureVerifier.Result result =
+                SignatureVerifier.verify(certificate, environment, inputSent, signature);
+        switch (result) {
+            case MATCHED -> LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: signature verifies against the card's own certificate", operation),
+                    null);
+            case NOT_CHECKED -> LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: signature could not be checked locally — the certificate did not"
+                            + " parse, the signature had an unusable shape, or this platform"
+                            + " has no such algorithm. The signature is returned unchecked",
+                    operation), null);
+            case MISMATCHED -> {
+                String message = String.format(
+                        "%s: the card returned a signature that does not verify under its own"
+                                + " certificate. The algorithm or key reference it described"
+                                + " does not match what it actually signed with — environment:"
+                                + " %s", operation, environment);
+                if (environment.source() == SecurityEnvironment.Source.CARD) {
+                    throw new SignatureAlgorithmException(message);
+                }
+                LoggingUtil.Companion.errorLog(TAG, message
+                        + ". Not refused, because these are constants measured for this card"
+                        + " model rather than anything the card said, and they are known to"
+                        + " work — so this is more likely a limitation of the local check than"
+                        + " a bad signature. Investigate before trusting the signature", null);
+            }
+        }
+    }
+
+    /** SELECT an EF by file id under the current DF and read it to the end. */
+    private byte[] readEf(byte[] fileId) throws SmartCardReaderException {
+        reader.transmit(0x00, 0xA4, 0x02, 0x0C, fileId, null);
+        walkSelectedAnEf = true;
+        return readUntilEof();
+    }
+
+    /**
+     * The constants measured for this card model, for models that are not asked —
+     * see {@link #resolveSecurityEnvironmentFromCard}. Only Estonian cards reach
+     * this, and they are EC throughout.
+     */
+    protected abstract SecurityEnvironment measuredSecurityEnvironment(
+            SigningOperation operation) throws SecurityEnvironmentException;
+
+    /**
+     * {@code hash} as an authentication needs it: wrapped in a PKCS#1
+     * {@code DigestInfo} when the algorithm names no hash, otherwise untouched.
+     *
+     * <p>Deliberately not widened for a short EC hash, unlike
+     * {@link #signingInput}. {@code INTERNAL AUTHENTICATE} has always been given
+     * the caller's bytes as they are, and every caller passes a digest matching the
+     * curve, so widening here would change the wire format of a working operation
+     * to no purpose.
+     */
+    protected byte[] authenticationInput(byte[] hash, SecurityEnvironment environment)
+            throws SmartCardReaderException {
+        requireDigestFitsAlgorithm(hash, environment);
+        if (environment.needsHostDigestInfo()) {
+            return DigestInfo.wrap(hash);
+        }
+        return hash;
+    }
+
+    /**
+     * {@code hash} as a signature needs it.
+     *
+     * <p>Three shapes, and the differences are not cosmetic:
+     *
+     * <ul>
+     *   <li>An algorithm that names no hash will sign whatever it is handed, so
+     *       the PKCS#1 {@code DigestInfo} has to be built here or the result is
+     *       not an RS256 signature. The 2020 Latvian card's authentication key
+     *       offers only such an algorithm.</li>
+     *   <li>An EC hash shorter than the field is widened, which is what the card
+     *       expects of a P-384 key given a shorter digest, and what this operation
+     *       has always done.</li>
+     *   <li>An RSA hash is never widened: those leading zeros would be signed as
+     *       part of the value.</li>
+     * </ul>
+     */
+    protected byte[] signingInput(byte[] hash, SecurityEnvironment environment)
+            throws SmartCardReaderException {
+        requireDigestFitsAlgorithm(hash, environment);
+        if (environment.needsHostDigestInfo()) {
+            return DigestInfo.wrap(hash);
+        }
+        if (environment.isRsa()) {
+            return hash;
+        }
+        return padWithZeroes(hash);
+    }
+
+    /**
+     * Refuses a digest of the wrong length for an algorithm the card named.
+     *
+     * <p>The card builds the encoding from the hash it was told to expect, so a
+     * digest of another length would be encoded as that hash and signed. Nothing
+     * downstream would say so; the signature would simply not verify.
+     */
+    private void requireDigestFitsAlgorithm(byte[] hash, SecurityEnvironment environment)
+            throws SignatureAlgorithmException {
+        if (!environment.isRsa()) {
+            // ECDSA signs the value it is given without encoding a hash identifier
+            // into it, so a length that does not match the curve is the caller's
+            // business, not a corruption.
+            return;
+        }
+        SignatureAlgorithm named = environment.namedAlgorithm();
+        if (named != null) {
+            if (hash.length != named.digestLength()) {
+                // The card builds the encoding from the hash it was told to expect,
+                // so a digest of another length would be encoded as that hash and
+                // signed. Nothing downstream would say so.
+                throw new SignatureAlgorithmException(String.format(
+                        "This key signs with %s, so it needs a %d-byte hash, but was given"
+                                + " %d bytes. Hash with the algorithm"
+                                + " Token.signatureAlgorithm(type, certificate) returned.",
+                        named.jwaName(), named.digestLength(), hash.length));
+            }
+            return;
+        }
+
+        // The key's algorithm row names no hash, so nothing on the card fixes which
+        // one this is: the DigestInfo is built here from the digest handed in, and
+        // whatever length that is becomes the algorithm the signature is over. That
+        // makes a mismatch invisible — the signature verifies against its own
+        // encoding, and only the name in the token is wrong. So the digest has to
+        // match the algorithm we reported for this key, which for a hashless row is
+        // the RSA default. Asked for rather than restated, so this check and the
+        // answer it is checking cannot drift apart.
+        SignatureAlgorithm assumed = SignatureAlgorithm.forRsaKey();
+        if (hash.length != assumed.digestLength()) {
+            throw new SignatureAlgorithmException(String.format(
+                    "This key's algorithm names no hash, so %s is assumed and a %d-byte"
+                            + " digest is expected, but was given %d bytes. A %d-byte digest"
+                            + " would be signed as a different algorithm than the one"
+                            + " reported, producing a token whose stated algorithm does not"
+                            + " match its signature. Hash with the algorithm"
+                            + " Token.signatureAlgorithm(type, certificate) returned.",
+                    assumed.jwaName(), assumed.digestLength(), hash.length, hash.length));
         }
     }
 
@@ -577,7 +950,7 @@ abstract class Idemia implements Token {
     }
 
     /** SELECT the AID owning one applet context. */
-    private void selectAppletContext(AppletContext context) throws SmartCardReaderException {
+    void selectAppletContext(AppletContext context) throws SmartCardReaderException {
         switch (context) {
             case MAIN -> selectMainAid();
             case OBERTHUR -> selectOberthurAid();

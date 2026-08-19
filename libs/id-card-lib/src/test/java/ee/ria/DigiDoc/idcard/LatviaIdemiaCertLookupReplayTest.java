@@ -53,12 +53,6 @@ import java.time.Instant;
  */
 public final class LatviaIdemiaCertLookupReplayTest {
 
-    private static final String SELECT_MAIN_AID =
-            "00a4040c10a000000077010800070000fe00000100";
-    private static final String SELECT_OBERTHUR_AID = "00a4040c0de828bd080ff2504f5420415750";
-    private static final String SELECT_QSCD_AID =
-            "00a4040c1051534344204170706c69636174696f6e";
-
     private static final String SELECT_AUTH_CERT_FCI = "00a4090404adf13401";
     private static final String SELECT_AUTH_CERT_NO_FCI = "00a4090c04adf13401";
     private static final String SELECT_SIGN_CERT_FCI = "00a4090404adf2341f";
@@ -233,7 +227,7 @@ public final class LatviaIdemiaCertLookupReplayTest {
     public void certificate_whenFciBoundedReadIsNotDer_readsViaCanonicalPath()
             throws Exception {
         var fixture = ReplayFixture.lv()
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 // FCP declaring 0x0400 = 1024 bytes.
                 .expect(SELECT_AUTH_CERT_FCI, okPadded(
                         "62248002040082010183023401"
@@ -288,11 +282,11 @@ public final class LatviaIdemiaCertLookupReplayTest {
      * into an authentication.
      */
     static void loadSeidAuthCertRead(ApduReplayReader r) {
-        r.expect(SELECT_OBERTHUR_AID, okPadded(""));
+        r.expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""));
         r.expect(SELECT_ALTERNATE_AUTH_EF, okPadded(""));
         loadChunkedRead(r, SEID_AUTH_CERT_CHUNKS);
         // Card left on MAIN for the next Token call.
-        r.expect(SELECT_MAIN_AID, okPadded(""));
+        r.expect(TestApdus.SEL_MAIN_AID, okPadded(""));
     }
 
     /**
@@ -307,10 +301,10 @@ public final class LatviaIdemiaCertLookupReplayTest {
     public void signCertificate_whenHardcodedEfIsEmpty_readsKnownAlternateEf()
             throws Exception {
         var fixture = ReplayFixture.lvSeid()
-                .expect(SELECT_QSCD_AID, okPadded(""))
+                .expect(TestApdus.SEL_QSCD_AID, okPadded(""))
                 .expect(SELECT_ALTERNATE_SIGN_EF, okPadded(""))
                 .with(r -> loadChunkedRead(r, SEID_SIGN_CERT_CHUNKS))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .tunnel();
 
         byte[] certificate = fixture.token.certificate(CertificateType.SIGNING);
@@ -346,16 +340,16 @@ public final class LatviaIdemiaCertLookupReplayTest {
 
         var fixture = ReplayFixture.lvSeid()
                 // First choice for this card: present, but a placeholder here.
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_ALTERNATE_AUTH_EF, okPadded(""))
                 .expect("00b0000000", okPadded(ONE_PLACEHOLDER_BYTE))
                 .expect("00b0000100", err6B00())
                 // Second choice, the model's own EF. Its FCP declares one byte,
                 // which is conclusive: no canonical read is attempted.
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .expect(SELECT_AUTH_CERT_FCI, okPadded(EMPTY_AUTH_CERT_FCI))
                 // …so fall through to the EF.OD → CDF walk.
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_EF_OD, okPadded(""))
                 .expect("00b0000000", okPadded(OBERTHUR_EF_OD))
                 .expect("00b0002800", err6B00())
@@ -366,7 +360,7 @@ public final class LatviaIdemiaCertLookupReplayTest {
                 // the AID: selecting EFs by FID leaves the current DF alone.
                 .expect("00a4020c023403", okPadded(""))
                 .with(r -> loadChunkedRead(r, SEID_AUTH_CERT_CHUNKS))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .tunnel();
 
         byte[] certificate = fixture.token.certificate(CertificateType.AUTHENTICATION);
@@ -394,14 +388,14 @@ public final class LatviaIdemiaCertLookupReplayTest {
         assertThat(cdfNaming341d).isNotEqualTo(QSCD_CDF);
 
         var fixture = ReplayFixture.lvSeid()
-                .expect(SELECT_QSCD_AID, okPadded(""))
+                .expect(TestApdus.SEL_QSCD_AID, okPadded(""))
                 .expect(SELECT_ALTERNATE_SIGN_EF, okPadded(""))
                 .expect("00b0000000", okPadded(ONE_PLACEHOLDER_BYTE))
                 .expect("00b0000100", err6B00())
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .expect(SELECT_SIGN_CERT_FCI, okPadded(EMPTY_SIGN_CERT_FCI))
                 // EF.OD → CDF walk in the QSCD applet.
-                .expect(SELECT_QSCD_AID, okPadded(""))
+                .expect(TestApdus.SEL_QSCD_AID, okPadded(""))
                 .expect(SELECT_EF_OD, okPadded(""))
                 .expect("00b0000000", okPadded(QSCD_EF_OD))
                 .expect("00b0002800", err6B00())
@@ -410,7 +404,7 @@ public final class LatviaIdemiaCertLookupReplayTest {
                 .expect("00b0004a00", err6B00())
                 .expect("00a4020c02341d", okPadded(""))
                 .with(r -> loadChunkedRead(r, SEID_SIGN_CERT_CHUNKS))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .tunnel();
 
         byte[] certificate = fixture.token.certificate(CertificateType.SIGNING);
@@ -434,13 +428,13 @@ public final class LatviaIdemiaCertLookupReplayTest {
     public void certificate_whenNothingHoldsACertificate_throwsCertificateNotFound()
             throws Exception {
         var fixture = ReplayFixture.lvSeid()
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_ALTERNATE_AUTH_EF, err(0x6A, 0x82))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .expect(SELECT_AUTH_CERT_FCI, okPadded(EMPTY_AUTH_CERT_FCI))
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_EF_OD, err(0x6A, 0x82))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .tunnel();
 
         var thrown = org.junit.jupiter.api.Assertions.assertThrows(
@@ -472,16 +466,16 @@ public final class LatviaIdemiaCertLookupReplayTest {
     public void certificate_whenTheTagIsLostDuringThePkcs15Walk_reportsTheTransportFailure()
             throws Exception {
         var fixture = ReplayFixture.lvSeid()
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_ALTERNATE_AUTH_EF, err(0x6A, 0x82))
-                .expect(SELECT_MAIN_AID, okPadded(""))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
                 .expect(SELECT_AUTH_CERT_FCI, okPadded(EMPTY_AUTH_CERT_FCI))
-                .expect(SELECT_OBERTHUR_AID, okPadded(""))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
                 .expect(SELECT_EF_OD, tagLost())
                 // Re-selecting MAIN is attempted regardless and fails the same
                 // way; it stays silent so as not to replace what the caller is
                 // about to be told.
-                .expect(SELECT_MAIN_AID, tagLost())
+                .expect(TestApdus.SEL_MAIN_AID, tagLost())
                 .tunnel();
 
         var thrown = org.junit.jupiter.api.Assertions.assertThrows(
@@ -560,7 +554,7 @@ public final class LatviaIdemiaCertLookupReplayTest {
      * re-chunked for this form.
      */
     static void loadCanonicalCertRead(ApduReplayReader r) {
-        r.expect(SELECT_MAIN_AID, okPadded(""));
+        r.expect(TestApdus.SEL_MAIN_AID, okPadded(""));
         r.expect(SELECT_AUTH_CERT_NO_FCI, okPadded(""));
 
         r.expect("00b0000000", okPadded(

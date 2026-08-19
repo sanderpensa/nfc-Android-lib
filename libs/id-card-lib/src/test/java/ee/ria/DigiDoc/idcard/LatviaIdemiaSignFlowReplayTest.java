@@ -42,6 +42,7 @@ public final class LatviaIdemiaSignFlowReplayTest {
     @Test
     public void authenticate_replaysLvAuthSignFlow_returnsCapturedSignature() throws Exception {
         var fixture = ReplayFixture.lv()
+                .with(LvCardMetadata::scriptOberthur)
                 .with(r -> {
                     r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
                     r.expect("00200001" + "0c" + TestPins.PIN1_PADDED_FF, ok());
@@ -63,6 +64,7 @@ public final class LatviaIdemiaSignFlowReplayTest {
     @Test
     public void calculateSignature_replaysLvDocumentSignFlow_returnsCapturedSignature() throws Exception {
         var fixture = ReplayFixture.lv()
+                .with(r -> LvCardMetadata.scriptQscd(r, false))
                 .with(r -> {
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
                     r.expect("00200085" + "0c" + TestPins.PIN2_PADDED_FF, ok());

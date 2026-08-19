@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
  */
 public final class EstoniaIdemiaSignFlowReplayTest {
 
-    private static final String CAPTURED_AUTH_SIGNATURE =
+    static final String CAPTURED_AUTH_SIGNATURE =
             "0445217652db2401f64ea2222a21f8cfc8d05757e580c118a57d2c66318dd5b3"
                     + "5a6f360b3917ec58b57883997fb92c03ca449bfe95d674ddcdc7514800c618cf"
                     + "0d7e9e31ae4a430468043c5d857efab721b3354b4b7b7c85ca1d700a369fdf03";

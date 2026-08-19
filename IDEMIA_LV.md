@@ -944,9 +944,20 @@ INTERNAL AUTHENTICATE:
   > or input length changes. Pass the hash unmodified per §9 — do not
   > borrow §10's padding rule here.
 
-> **LV vs Estonian:** Estonian IDEMIA uses a 4-byte algorithm reference
-> `FF 20 08 00`; LV uses a 1-byte `0x04`. Length bytes must match
-> (`80 01 04` vs `80 04 FF 20 08 00`). Do not copy Estonian code blindly.
+> **Superseded — do not treat the reference as fixed.** This section used to say
+> that Estonian IDEMIA uses a 4-byte algorithm reference (`FF 20 08 00`) and LV a
+> 1-byte one (`0x04`). That is **false as a rule**: a Latvian card observed
+> 2026-08-18 (`uuem`) uses the four-byte form with Latvian key references, and
+> another Latvian card sharing its ATS uses the one-byte form. The `80 01 04` shown
+> above is what *this capture's* card wanted, not what the model wants.
+>
+> The library therefore no longer hardcodes it for Latvian cards — it reads the
+> reference and the key reference out of the card's own PKCS#15 metadata, and
+> refuses to sign rather than guess if the card will not say. Estonian cards do use
+> the four-byte constants by design.
+>
+> The length byte must still match the payload (`80 01 04` vs
+> `80 04 FF 20 08 00`), whichever form a card turns out to use.
 
 ---
 
