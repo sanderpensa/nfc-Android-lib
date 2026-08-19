@@ -25,7 +25,10 @@ import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
  * A PIN or PUK was handed to the library in a shape that cannot go in the
  * card's twelve-byte code field — empty, or longer than the field.
  *
- * <p>Thrown before anything reaches the card, which is the point of it. Codes
+ * <p>Thrown before the code reaches the card, which is the point of it: no VERIFY,
+ * CHANGE or UNBLOCK goes out, so no retry is spent and nothing is stored. The
+ * operation may already have selected an applet or read metadata by then — what
+ * matters is that the malformed code itself never leaves. Codes
  * are sent right-padded to twelve bytes, so an empty one would become twelve
  * padding bytes — a perfectly well-formed command that the card cannot tell
  * apart from a real attempt, because the padding is applied here rather than

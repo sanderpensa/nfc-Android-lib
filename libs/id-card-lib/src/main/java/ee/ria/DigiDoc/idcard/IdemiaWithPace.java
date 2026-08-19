@@ -992,8 +992,12 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
             // and get this same exception from authenticate() two lines later.
             // Failing now says what is wrong, before any of that work.
             //
-            // Caught ahead of the transport check because it carries no cause, so
-            // cardResponse() cannot tell it apart from a lost tag.
+            // Defensive rather than load-bearing today: this exception carries no
+            // cause, so cardResponse() below already reports null and rethrows it by
+            // the same route. Kept explicit because that is an accident of how the
+            // exception is constructed — give it an ApduResponseException cause and
+            // the branch below would start swallowing a decline as a card refusal,
+            // silently, with nothing to point at.
             throw e;
         } catch (SmartCardReaderException e) {
             if (cardResponse(e) == null) {
@@ -1097,23 +1101,24 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
         return stream.toByteArray();
     }
 
-    /**
-     * Parse PACEInfo parameterId from EF.CardAccess.
-     *
-     * EF.CardAccess is ASN.1: SET OF SecurityInfo
-     * PACEInfo ::= SEQUENCE { OID protocol, INTEGER version, INTEGER parameterId }
-     *
-     * Multiple SecurityInfo entries may share the { OID, INTEGER, INTEGER } shape
-     * (e.g. ChipAuthenticationInfo); only the entry whose protocol OID matches
-     * id-PACE-ECDH-GM-AES-CBC-CMAC-256 (the mechanism we use in MSE SET AT) is
-     * a valid source for parameterId.
-     *
-     * @return parameterId byte, or 0 if not found
-     */
+    /** id-PACE-ECDH-GM-AES-CBC-CMAC-256, the mechanism named in MSE SET AT. */
     private static final byte[] PACE_PROTOCOL_OID = {
             0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x04
     };
 
+    /**
+     * Parse PACEInfo parameterId from EF.CardAccess.
+     *
+     * <p>EF.CardAccess is ASN.1: SET OF SecurityInfo
+     * PACEInfo ::= SEQUENCE { OID protocol, INTEGER version, INTEGER parameterId }
+     *
+     * <p>Multiple SecurityInfo entries may share the { OID, INTEGER, INTEGER } shape
+     * (e.g. ChipAuthenticationInfo); only the entry whose protocol OID matches
+     * {@link #PACE_PROTOCOL_OID} is a valid source for parameterId.
+     *
+     * @param cardAccess the raw EF.CardAccess bytes
+     * @return parameterId byte, or 0 if not found
+     */
     private static byte parsePaceParameterId(byte[] cardAccess) {
         List<TLV> entries = TLV.parseAll(cardAccess);
         for (TLV entry : entries) {

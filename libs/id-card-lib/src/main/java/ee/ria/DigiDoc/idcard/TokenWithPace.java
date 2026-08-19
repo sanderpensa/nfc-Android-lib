@@ -148,6 +148,15 @@ public interface TokenWithPace extends Token {
      * from 2020 whose certificates are at the model's own EFs with different key
      * references. So read this as "which ATS answered", and the certificate and
      * security-environment lines for what the card turned out to be.
+     *
+     * <p><b>Public deliberately, not by accident.</b> A {@code static} method on an
+     * interface cannot be package-private, so shipping it at all means shipping it in
+     * the API — noted here because 2.0.0 is where that gets decided rather than
+     * inherited. It is kept because it is exactly what someone reading a support log
+     * needs: pure, no card I/O, and it turns an ATS nobody can read into the marking
+     * printed on the card. It answers a question about bytes, not about this
+     * library's state, so it carries no compatibility burden beyond the string it
+     * returns — and that string is for humans, not for parsing.
      */
     static String marking(byte[] atr) {
         if (atr == null) {

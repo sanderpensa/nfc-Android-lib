@@ -25,9 +25,24 @@ import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
  * No signature algorithm could be settled on for a certificate — the key is of
  * a kind this library cannot yet drive, or the certificate did not parse.
  *
- * <p>Thrown before anything reaches the card, which is the point of it: the
- * alternative is discovering the mismatch at {@code MSE:SET} time, after a PIN
- * has already been spent on a signature that was never going to verify.
+ * <p>When it is raised depends on which of three things went wrong, and only the
+ * first two are free:
+ *
+ * <ul>
+ *   <li><b>No algorithm could be settled on</b> — an unsupported key, or a
+ *       certificate that will not parse. Nothing has reached the card.</li>
+ *   <li><b>The digest does not fit the algorithm the key signs with.</b> Raised
+ *       while the input is prepared, which happens before the PIN is verified — so
+ *       no retry is spent, though the card may already have been read to find out
+ *       what the key signs with.</li>
+ *   <li><b>The signature did not verify under the card's own certificate</b>
+ *       (authentication only, and only where the environment came from the card).
+ *       That one costs a retry: it cannot be known until the card has signed.</li>
+ * </ul>
+ *
+ * <p>The first two are the point of the type: the alternative is discovering the
+ * mismatch at {@code MSE:SET} time, after a PIN has been spent on a signature that
+ * was never going to verify.
  *
  * <p>Checked (via {@link SmartCardReaderException}) for the same reason as
  * {@link CodeFormatException}: on Android these calls run on the NFC callback

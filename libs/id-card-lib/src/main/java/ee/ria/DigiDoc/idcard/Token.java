@@ -161,15 +161,20 @@ public interface Token {
      * only shows up as a {@code StackOverflowError} at run time.
      *
      * <p><b>Card I/O:</b> the same as
-     * {@link #signatureAlgorithm(CertificateType, byte[])}, and shares its cache —
-     * asking both costs no second read.
+     * {@link #signatureAlgorithm(CertificateType, byte[])}, and shares its cache, so
+     * asking both reads no file twice — it costs two applet selects, not a second
+     * walk.
      *
-     * <p>A card that will not describe its own keys raises
+     * <p>For an <b>RSA</b> key, a card that will not describe its own keys raises
      * {@link SecurityEnvironmentException} from here rather than answering. It cannot
      * sign at all — the signing calls raise the same thing — so naming an algorithm
      * for it would be a fiction the caller then hashes for and puts in a token.
      * Failing at the first question is the same outcome two steps earlier, with
      * nothing invented in between.
+     *
+     * <p>An <b>EC</b> key is answered from the certificate without asking the card, so
+     * such a card is not detected here and fails at the signing call instead. That is
+     * most Latvian personalisations on record.
      *
      * @param type Which of the card's keys this is about.
      * @param certificate DER-encoded certificate of that key, as returned by
@@ -189,11 +194,17 @@ public interface Token {
     /**
      * Calculate electronic signature with pre-calculated hash.
      *
+     * <p>{@code hash} must match the algorithm this key signs with — ask
+     * {@link #signatureAlgorithm(CertificateType, byte[])}. A digest of the wrong
+     * length for an RSA key is refused before the PIN is verified, so it costs no
+     * retry.
+     *
      * @param pin2 PIN2 code.
      * @param hash Pre-calculated hash.
      * @param ecc Whether it's a elliptic curve certificate.
      * @return Signed data.
      * @throws SmartCardReaderException When calculating signature failed.
+     * @throws SignatureAlgorithmException When the hash does not suit the key.
      * @throws CodeVerificationException When PIN2 code is wrong.
      */
     byte[] calculateSignature(byte[] pin2, byte[] hash, boolean ecc)
@@ -202,10 +213,17 @@ public interface Token {
     /**
      * Signs the authentication token hash
      *
+     * <p>Same digest rule as {@link #calculateSignature(byte[], byte[], boolean)}.
+     * Additionally, when a certificate for this key has been read in this session,
+     * the returned signature is checked against it; a card that signed with
+     * something other than what it described raises rather than returning.
+     *
      * @param pin1 PIN1 code
      * @param token Authentication token
      * @return authentication token hash signature
      * @throws SmartCardReaderException When signing the token failed
+     * @throws SignatureAlgorithmException When the hash does not suit the key, or the
+     *                                     signature does not verify under it
      * @throws CodeVerificationException When PIN1 code is wrong
      */
     byte[] authenticate(byte[] pin1, byte[] token)

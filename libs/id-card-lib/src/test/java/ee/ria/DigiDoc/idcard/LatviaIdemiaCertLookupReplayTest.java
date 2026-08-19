@@ -452,6 +452,52 @@ public final class LatviaIdemiaCertLookupReplayTest {
     }
 
     /**
+     * A card that answers the FCI precisely keeps the fast path for the rest of the
+     * session.
+     *
+     * <p>A declared size of one byte is the FCI <em>working</em>: it saved a SELECT
+     * and two READs by saying outright that nothing is there. Treating that as
+     * evidence the FCI is unusable would give the saving back on every later
+     * certificate read — which is what happened while the flag was cleared one
+     * statement too early.
+     *
+     * <p>Pinned by which SELECT the second read uses: {@code P2 = 0x04} is the FCI
+     * form, {@code P2 = 0x0C} the canonical one. The fixture scripts only the former,
+     * so a regression fails here as an unexpected APDU rather than as a slower tap
+     * nobody measures.
+     */
+    @Test
+    public void aPreciseFciAnswerKeepsTheFastPathForTheNextRead() throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                // Authentication: the applet EF has nothing, the model EF declares one
+                // byte, and the PKCS#15 walk finds nothing either.
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
+                .expect(SELECT_ALTERNATE_AUTH_EF, err(0x6A, 0x82))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
+                .expect(SELECT_AUTH_CERT_FCI, okPadded(EMPTY_AUTH_CERT_FCI))
+                .expect(TestApdus.SEL_OBERTHUR_AID, okPadded(""))
+                .expect(SELECT_EF_OD, err(0x6A, 0x82))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
+                // Signing, in the same session: still the FCI form. The canonical
+                // SELECT is deliberately not scripted.
+                .expect(TestApdus.SEL_QSCD_AID, okPadded(""))
+                .expect(SELECT_ALTERNATE_SIGN_EF, err(0x6A, 0x82))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
+                .expect(SELECT_SIGN_CERT_FCI, okPadded(EMPTY_SIGN_CERT_FCI))
+                .expect(TestApdus.SEL_QSCD_AID, okPadded(""))
+                .expect(SELECT_EF_OD, err(0x6A, 0x82))
+                .expect(TestApdus.SEL_MAIN_AID, okPadded(""))
+                .tunnel();
+
+        org.junit.jupiter.api.Assertions.assertThrows(CertificateNotFoundException.class,
+                () -> fixture.token.certificate(CertificateType.AUTHENTICATION));
+        org.junit.jupiter.api.Assertions.assertThrows(CertificateNotFoundException.class,
+                () -> fixture.token.certificate(CertificateType.SIGNING));
+
+        fixture.assertAllConsumed();
+    }
+
+    /**
      * The same journey as above right up to the last step, where the card
      * leaves the field instead of answering. That must not be reported as
      * {@link CertificateNotFoundException}: "this card has no certificate"

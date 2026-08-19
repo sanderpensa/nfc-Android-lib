@@ -385,7 +385,6 @@ abstract class Idemia implements Token {
             if (fci.certificate() != null) {
                 return fci.certificate();
             }
-            fciCertReadSupported = false;
             if (fci.declaredSize() != null) {
                 // The card gave a straight answer about this file: it holds
                 // fewer bytes than any certificate could. Believe it and move
@@ -393,8 +392,16 @@ abstract class Idemia implements Token {
                 // it. Nothing has been seen to contradict a declared size this
                 // small — on the LV "SeID" card both read forms agree on one
                 // byte, for both certificates.
+                //
+                // The fast path stays on: a card that answered this precisely is
+                // one whose FCI works. Clearing the flag here would give up the
+                // saving this branch just took, for every later read in the
+                // session.
                 return null;
             }
+            // No certificate and no declared size: the FCI told us nothing usable,
+            // so stop paying for it and read canonically from here on.
+            fciCertReadSupported = false;
         }
         return readCertificateCanonically(location.path());
     }
@@ -753,7 +760,8 @@ abstract class Idemia implements Token {
                                 + " described does not match what it actually signed with, or"
                                 + " this is not the certificate for the key that signed — a"
                                 + " location holding the other type's certificate looks exactly"
-                                + " like this. Check the KeyUsage line logged when it was read."
+                                + " like this — the KeyUsage of each certificate is checked"
+                                + " when it is read, and anything odd is logged there."
                                 + " Environment: %s", operation, environment);
                 if (environment.source() == SecurityEnvironment.Source.CARD) {
                     throw new SignatureAlgorithmException(message);
@@ -827,7 +835,19 @@ abstract class Idemia implements Token {
         if (environment.isRsa()) {
             return hash;
         }
-        return padWithZeroes(hash);
+        // Widened to the algorithm the card named for this key, not to a fixed 48.
+        // A P-384 row asks for 48 and gets exactly what it always got; a P-256 row
+        // asks for 32, where padding to 48 would hand the card sixteen zero bytes
+        // followed by half the digest — which it would truncate back to its own field
+        // size and sign, producing a signature over a value nobody chose. Nothing
+        // downstream would catch that: this is the signing path, which verifySignature
+        // deliberately does not cover.
+        //
+        // A card that names no algorithm keeps the historical width. That is every
+        // Estonian card, whose 48 is measured rather than inferred, and it is why this
+        // changes nothing for any card on record.
+        SignatureAlgorithm named = environment.namedAlgorithm();
+        return padWithZeroes(hash, named != null ? named.digestLength() : 48);
     }
 
     /**
@@ -1377,20 +1397,26 @@ abstract class Idemia implements Token {
     }
 
     /**
-     * ID1 only has ECC keys so we don't need to pad it as we do RSA hashes,
-     * but we need to pad hashes that are smaller than the key size with zeroes in front to resize
-     * them to 48bytes in length because of API restrictions on the chip
+     * {@code hash} left-padded with zeroes to {@code width}, or unchanged when it is
+     * already that long or longer.
      *
-     * @param hash that needs to be signed
-     * @return zero padded hash with 48 byte length or same hash if it's longer than 48 bytes
+     * <p>Left-padding keeps the value: an ECDSA input is an integer, and leading
+     * zeroes do not change it. Widening to the digest length of the algorithm the key
+     * signs with can never overshoot the curve, because JWA pairs each curve with a
+     * hash no longer than its field — see the call site for why the width matters.
+     *
+     * @param hash the digest that needs to be signed
+     * @param width the length to pad up to, in bytes
+     * @return {@code hash} left-padded to {@code width}, or {@code hash} itself when it
+     *         is already at least that long
      * @throws IdCardException when padding the hash fails
      */
-    protected static byte[] padWithZeroes(byte[] hash) throws IdCardException {
-        if (hash.length >= 48) {
+    protected static byte[] padWithZeroes(byte[] hash, int width) throws IdCardException {
+        if (hash.length >= width) {
             return hash;
         }
         try (ByteArrayOutputStream toSign = new ByteArrayOutputStream()) {
-            toSign.write(new byte[48 - hash.length]);
+            toSign.write(new byte[width - hash.length]);
             toSign.write(hash);
             return toSign.toByteArray();
         } catch (IOException e) {
