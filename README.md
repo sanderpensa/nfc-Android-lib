@@ -82,10 +82,11 @@ The demo application (`demoapp/app`) provides a complete reference implementatio
   * `libs/smart-card-reader-lib/build/outputs/aar`
   * `libs/card-utils-lib/build/outputs/aar`
 * Move the resulting `.aar` files to your project's `/libs` directory.
-* Add the dependencies to your application's `build.gradle` file:
-    * `implementation files('app/libs/id-card-lib-1.2.7-release.aar')`
-    * `implementation files('app/libs/smart-card-reader-lib-1.2.7-release.aar')`
-    * `implementation files('app/libs/card-utils-lib-1.2.7-release.aar')`
+* Add the dependencies to your application's `build.gradle` file, substituting
+  `<version>` with the one in `version.properties`:
+    * `implementation files('app/libs/id-card-lib-<version>-release.aar')`
+    * `implementation files('app/libs/smart-card-reader-lib-<version>-release.aar')`
+    * `implementation files('app/libs/card-utils-lib-<version>-release.aar')`
 
 The filenames carry the library version and the build type — see
 [Versioning the AAR](#versioning-the-aar) for where those come from and what to do
@@ -100,13 +101,13 @@ somebody's own build. They come from two files, which differ in one important wa
 
 ```properties
 # version.properties
-version=1.2.7
+version=2.0.0
 ```
 
 This is the library version for all three AARs. It is in git on purpose — a
 version is a fact about the source, so a version in a log or an AAR name maps back
 to a commit, and bumping it is a reviewable change. Pre-release tags work:
-`1.2.7-rc` is a valid version. The build fails if the file or the key is missing,
+`2.0.0-rc` is a valid version. The build fails if the file or the key is missing,
 since that means it was deleted rather than never created.
 
 **`environment.properties`, also at the root, is gitignored and optional:**
@@ -120,11 +121,11 @@ A template is checked in as `environment.properties.example`. Set it to keep you
 own builds apart from a release, or when consumers need to pin an exact build; it
 never lands in a release AAR by accident because it is never committed.
 
-* without a suffix → `id-card-lib-1.2.7-release.aar`
-* with one        → `id-card-lib-1.2.7-internal-release.aar`
+* without a suffix → `id-card-lib-<version>-release.aar`
+* with one        → `id-card-lib-<version>-internal-release.aar`
 
 The trailing `-release` is the build type, which AGP appends to every AAR it
-writes — a debug build of the first line is `id-card-lib-1.2.7-debug.aar`. It is
+writes — a debug build of the first line is `id-card-lib-<version>-debug.aar`. It is
 not part of what these keys control, but it is part of the filename, and the
 version the library reports about itself includes it for that reason.
 
@@ -158,11 +159,11 @@ This applies to every Android library subproject under `libs/` and is wired up i
 The same two values reach the code, so a build can say what it is:
 
 ```kotlin
-IdCardLibrary.version()   // "1.2.7-internal-release", or "1.2.7-release" with no suffix
+IdCardLibrary.version()   // "2.0.0-internal-release", or "2.0.0-release" with no suffix
 ```
 
 That is the AAR's own filename without the module and the extension —
-`id-card-lib-1.2.7-internal-release.aar` reports `1.2.7-internal-release` — so a
+`id-card-lib-2.0.0-internal-release.aar` reports `2.0.0-internal-release` — so a
 version in a log and the artefact it came from cannot disagree. The tail is the
 build type, named rather than inferred, so a `-debug` in a log is recognisable as
 a build that was never shipped. Because the version is committed, every build
@@ -173,7 +174,7 @@ The library also puts it on the card line it logs once per tap, so a captured
 the version into the filename:
 
 ```
-TokenWithPace: card: EE IDEMIA "SeID", ATS 0012233f536549440f9000 (ID1) -> IdemiaWithPace [id-card-lib 1.2.7-internal-release]
+TokenWithPace: card: EE IDEMIA "SeID", ATS 0012233f536549440f9000 (ID1) -> IdemiaWithPace [id-card-lib 2.0.0-internal-release]
 ```
 
 That line is subject to the same `loggingEnabled` gate as everything else below;
@@ -189,9 +190,9 @@ automatically. The integrator's `build.gradle.kts` must declare them explicitly:
 ```kotlin
 dependencies {
     // The three AARs, named as the build emits them
-    implementation(files("libs/id-card-lib-1.2.7-release.aar"))
-    implementation(files("libs/smart-card-reader-lib-1.2.7-release.aar"))
-    implementation(files("libs/card-utils-lib-1.2.7-release.aar"))
+    implementation(files("libs/id-card-lib-<version>-release.aar"))
+    implementation(files("libs/smart-card-reader-lib-<version>-release.aar"))
+    implementation(files("libs/card-utils-lib-<version>-release.aar"))
 
     // Referenced by id-card-lib + smart-card-reader-lib
     implementation("androidx.annotation:annotation:1.9.1")
