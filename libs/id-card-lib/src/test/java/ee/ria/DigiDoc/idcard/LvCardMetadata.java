@@ -69,14 +69,15 @@ final class LvCardMetadata {
     }
 
     /**
-     * The same under QSCD. EF.TokenInfo is only read once per session — it
-     * describes the platform, not the applet — so a fixture doing both operations
-     * calls {@link #scriptOberthur} first and this one needs no table read.
+     * The same under QSCD, including this applet's own EF.TokenInfo.
+     *
+     * <p>The table is read again here rather than carried over from
+     * {@link #scriptOberthur}: it is cached per applet, not per session, because
+     * the two applets' tables are not the same file. See {@code Idemia}'s
+     * {@code algorithmTables} for why that is deliberate.
      */
-    static void scriptQscd(ApduReplayReader r, boolean tableAlreadyRead) {
-        if (!tableAlreadyRead) {
-            r.expectFileRead("5032", TOKEN_INFO);
-        }
+    static void scriptQscd(ApduReplayReader r) {
+        r.expectFileRead("5032", TOKEN_INFO);
         r.expectFileRead("5031", QSCD_EF_OD);
         r.expectFileRead("7012", SIGN_PRKD);
         r.expect(TestApdus.SEL_QSCD_AID, ok());

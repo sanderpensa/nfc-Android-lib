@@ -50,6 +50,13 @@ enum SigningOperation {
      * agreement and advertises {@code derive-key} alone, which is what the Latvian
      * EC cards' row 13 says. Requiring {@code decipher} by itself meant decrypt
      * could never resolve on an EC card at all.
+     *
+     * <p><b>This mask does not identify the row on its own.</b> Every signing row
+     * on every captured table also advertises {@code derive-key}, so this mask
+     * matches all of them and the row has to be chosen by what it does <em>not</em>
+     * advertise — see the preference in {@code Idemia.firstUsableEnvironment}.
+     * Reading this mask as "the decipher row" is the mistake that once staged the
+     * authentication reference for decryption.
      */
     DECRYPT(Idemia.AppletContext.OBERTHUR, CertificateType.AUTHENTICATION,
             Pkcs15SecurityEnvironment.OPERATION_DECIPHER

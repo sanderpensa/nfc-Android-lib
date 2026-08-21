@@ -52,20 +52,30 @@ public final class TokenWithPaceCreateTest {
         assertThat(token.cardType()).isEqualTo(CardType.THALES);
     }
 
+    /**
+     * The two Latvian markings are one {@link CardType} but two implementations,
+     * because they keep their certificates in different files.
+     *
+     * <p>Asserted as the exact class, and the sibling test asserts the other card
+     * is <em>not</em> it. The subclass would satisfy a check against the parent, so
+     * a looser pair of assertions passes whichever way the branch goes — which is
+     * the one entry in this file's table that could be deleted unnoticed.
+     */
     @Test
-    public void create_latvianIdemiaSeidAts_returnsLatviaIdemiaWithPace() throws Exception {
+    public void create_latvianIdemiaSeidAts_returnsTheSeIdImplementation() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012428f536549440f9000"), TokenWithPaceConfig.allowAll());
-        assertThat(token).isInstanceOf(LatviaIdemiaWithPace.class);
+        assertThat(token).isInstanceOf(LatviaIdemiaSeIdWithPace.class);
         // Sanity: confirm cardType resolves to LATVIA_IDEMIA (not ID1 from parent).
         assertThat(token.cardType()).isEqualTo(CardType.LATVIA_IDEMIA);
     }
 
     @Test
-    public void create_latvianIdemiaTeid2Ats_returnsLatviaIdemiaWithPace() throws Exception {
+    public void create_latvianIdemiaTeid2Ats_returnsTheBaseLatvianImplementation() throws Exception {
         TokenWithPace token = TokenWithPace.create(
                 readerWithAts("0012428f54654944320f9000"), TokenWithPaceConfig.allowAll());
         assertThat(token).isInstanceOf(LatviaIdemiaWithPace.class);
+        assertThat(token).isNotInstanceOf(LatviaIdemiaSeIdWithPace.class);
         assertThat(token.cardType()).isEqualTo(CardType.LATVIA_IDEMIA);
     }
 

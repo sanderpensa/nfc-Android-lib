@@ -64,7 +64,7 @@ public final class LatviaIdemiaSignFlowReplayTest {
     @Test
     public void calculateSignature_replaysLvDocumentSignFlow_returnsCapturedSignature() throws Exception {
         var fixture = ReplayFixture.lv()
-                .with(r -> LvCardMetadata.scriptQscd(r, false))
+                .with(r -> LvCardMetadata.scriptQscd(r))
                 .with(r -> {
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
                     r.expect("00200085" + "0c" + TestPins.PIN2_PADDED_FF, ok());

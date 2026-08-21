@@ -31,12 +31,23 @@ public final class IdemiaDecryptReplayTest {
     private static final String DECIPHER_LC = "62";
 
     /**
-     * Latvian: the environment is resolved, and here the card offers no
-     * EF.TokenInfo so the measured decrypt template is used — {@code 80 01 04} with
-     * the authentication key, since decipher borrows that key.
+     * Latvian EC: the environment is read from the card, and the row staged is the
+     * key-agreement one.
+     *
+     * <p>{@code 80 01 0b} is entry 13, which advertises {@code derive-key} alone.
+     * The obvious-looking {@code 80 01 04} is entry 7 — the ECDSA row that
+     * <em>authentication</em> uses, and what this path staged while the mask alone
+     * chose the row: every signing row also advertises derive-key, so the mask
+     * matched all thirteen and the key's first entry won. The key reference is the
+     * authentication key either way, since decipher borrows it.
+     *
+     * <p>Nothing on the card would have reported the difference — it answers
+     * {@code 90 00} to any reference and a shared secret cannot be checked locally
+     * — so this assertion is the only thing standing between a wrong reference and
+     * a garbage secret.
      */
     @Test
-    public void decrypt_onLatvianCard_usesTheDecryptTemplateAndPassesTheCryptogramThrough()
+    public void decrypt_onLatvianCard_stagesTheKeyAgreementRowNotTheSigningOne()
             throws Exception {
         var fixture = ReplayFixture.lv()
                 .with(LvCardMetadata::scriptOberthur)
@@ -44,7 +55,7 @@ public final class IdemiaDecryptReplayTest {
                     r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
                     r.expect("00200001" + "0c" + TestPins.PIN1_PADDED_FF, ok());
                     // MSE:SET CT — P2 = 0xB8, not the 0xA4/0xB6 of the signing paths.
-                    r.expect("002241b8" + "06" + "800104" + "840182", ok());
+                    r.expect("002241b8" + "06" + "80010b" + "840182", ok());
                     // PSO DECIPHER, cryptogram behind its 0x00 indicator, unmodified.
                     r.expect("002a8086" + DECIPHER_LC + "00" + EPHEMERAL_POINT + "00",
                             bytes(SHARED_SECRET));
@@ -62,6 +73,11 @@ public final class IdemiaDecryptReplayTest {
      * Estonian: no walk at all, so the four-byte decrypt template goes out
      * directly. {@code FF 30 04 00} is its own algorithm, not the authentication
      * one — a copy-paste there would be invisible without this.
+     *
+     * <p>This constant is also the evidence for what the Latvian path above should
+     * send: {@code FF 30 04 00} is the IDEMIA table's derive-key-only row, and it
+     * is what Estonian cards have used in production. Latvian resolution now picks
+     * the same kind of row rather than a signing one.
      */
     @Test
     public void decrypt_onEstonianCard_usesItsOwnFourByteTemplate() throws Exception {
@@ -136,7 +152,7 @@ public final class IdemiaDecryptReplayTest {
         auth.assertAllConsumed();
 
         var sign = ReplayFixture.lv()
-                .with(r -> LvCardMetadata.scriptQscd(r, false))
+                .with(r -> LvCardMetadata.scriptQscd(r))
                 .with(r -> {
                     r.expect(TestApdus.SEL_QSCD_AID, ok());
                     r.expect("00200085" + "0c" + TestPins.PIN2_PADDED_FF, ok());

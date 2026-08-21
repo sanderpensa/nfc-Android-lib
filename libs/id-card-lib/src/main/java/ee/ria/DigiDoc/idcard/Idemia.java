@@ -55,8 +55,14 @@ abstract class Idemia implements Token {
      * file. Real EE/LV auth and sign certificates are ~1000-1600 bytes
      * (ECC P-384 keys, full DER); anything below this means the card's
      * {@code P2 = 0x04} FCI is not describing the certificate content —
-     * observed on older LV cards, which report {@code 80 02 00 01}. Treated
-     * as "no usable size" so we fall back to the canonical read.
+     * observed on older LV cards, which report {@code 80 02 00 01}.
+     *
+     * <p>A size below this is read as <em>this file is empty</em>, so the
+     * location is skipped and the next one tried — deliberately <em>without</em>
+     * the canonical re-read, which is the whole saving. Falling back is what
+     * happens when the FCI declares no size at all; a precise answer this small
+     * is treated as an answer. Raising this constant therefore makes the lookup
+     * skip more locations, not read more of them.
      */
     private static final int MIN_PLAUSIBLE_CERT_SIZE = 0x100;
 
@@ -591,10 +597,37 @@ abstract class Idemia implements Token {
      * personalisations, two of them behind one ATS, with key references, algorithm
      * reference widths and even key types varying between them.
      *
-     * <p>The machinery is model-independent and works on Estonian cards — an EE
-     * capture on 2026-08-18 resolved from metadata and reproduced both constants
-     * exactly — so this is one boolean if an unknown Estonian personalisation ever
-     * appears.
+     * <p>The machinery is model-independent in design, and an EE capture on
+     * 2026-08-18 resolved from metadata and reproduced the <em>authentication and
+     * signing</em> constants exactly. Read that for exactly what it is: one manual
+     * exercise, two of the three operations, and nothing in the test suite that
+     * would notice if it stopped being true. There is no captured Estonian key
+     * directory, so no test compares resolution against the measured constants —
+     * {@code estonianCardsAreNotAskedAndPayNothingForIt} asserts the opposite
+     * property, that no metadata is read at all.
+     *
+     * <p><b>So this is not one boolean.</b> Two things would have to be settled
+     * first, and both need a captured Estonian EF.OD and PrKD:
+     *
+     * <ul>
+     *   <li><b>Decrypt was never compared.</b> Its constant is the derive-key-only
+     *       row ({@code FF 30 04 00}); resolution reached the row by the operation
+     *       mask, which every row on the card satisfies. On Latvian cards that
+     *       staged a signing reference for decryption until 2026-08-21 — see the
+     *       preference in {@link #firstUsableEnvironment}. The Estonian equivalent
+     *       has never been checked either way.</li>
+     *   <li><b>The key's entry ordering is unpinned.</b> Resolution takes the first
+     *       row in the key's list that can serve the operation. Estonian signing
+     *       measures to a row that names a hash and authentication to one that does
+     *       not, so if either key's list led with the other's row, flipping this
+     *       would change what goes on the wire — quietly, since the card accepts
+     *       any reference.</li>
+     * </ul>
+     *
+     * <p>The algorithm table for this platform is already captured — the four-byte
+     * references in the tests' RSA fixture are these same constants at rows
+     * {@code 0x07}, {@code 0x0b} and {@code 0x0d}. Only the key directory is
+     * missing.
      */
     protected boolean resolveSecurityEnvironmentFromCard() {
         return false;
@@ -649,31 +682,49 @@ abstract class Idemia implements Token {
     private SecurityEnvironment firstUsableEnvironment(
             SigningOperation operation, List<Pkcs15SecurityEnvironment.Key> keys,
             Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table) {
+        // Matching the mask is not enough for an operation that accepts more than
+        // compute-signature. Every signing row on all three captured tables also
+        // advertises derive-key (00 51), so DECRYPT's decipher|derive-key mask
+        // matches every row on the card and the first entry in the key's list wins
+        // — a signing row. On the LV EC card that stages the same ECDSA reference
+        // authentication uses; the key-agreement row (derive-key alone) is never
+        // reached. Estonian cards, which work in production on measured constants,
+        // use the derive-key-only row for decrypt (80 04 FF 30 04 00) and the
+        // signing row for authentication, which is the arrangement being restored
+        // here.
+        //
+        // Selecting by the absent bit rather than by algorithm identity because
+        // identity does not discriminate: on the 2020 RSA card the signing row and
+        // the decipher row both carry rsaEncryption, so the operation bits are the
+        // only thing that tells them apart.
+        //
+        // A no-op for AUTHENTICATE and SIGN by construction: their mask is
+        // compute-signature alone, so nothing else is preferable and the single
+        // pass below is the one that runs.
+        boolean preferNonSigning = (operation.operationMask
+                & ~Pkcs15SecurityEnvironment.OPERATION_COMPUTE_SIGNATURE) != 0;
         for (Pkcs15SecurityEnvironment.Key key : keys) {
             if (!key.isUsable()) {
                 continue;
             }
-            for (Integer entry : key.algorithmEntries) {
-                Pkcs15SecurityEnvironment.Algorithm algorithm = table.get(entry);
-                if (algorithm == null || !algorithm.supports(operation.operationMask)) {
-                    continue;
+            if (preferNonSigning) {
+                SecurityEnvironment preferred = environmentFor(operation, key, table, true);
+                if (preferred != null) {
+                    return preferred;
                 }
-                if (key.rsa && !algorithm.rsaEncodingIsUnderstood()) {
-                    // The row names a hash this library does not know, and for RSA
-                    // the card builds the PKCS#1 encoding from that hash. Using it
-                    // would mean sending a digest of one kind and having it encoded
-                    // as another — a signature that verifies nowhere. Skip the row;
-                    // another may serve.
+            }
+            SecurityEnvironment any = environmentFor(operation, key, table, false);
+            if (any != null) {
+                if (preferNonSigning) {
+                    // Worth a line: this card offers nothing but signing rows for an
+                    // operation that is not signing, so the reference staged is a
+                    // compromise. Nothing verifies a decipher result locally, so if
+                    // it turns out wrong this log is the only trace of why.
                     LoggingUtil.Companion.debugLog(TAG, String.format(
-                            "%s: skipping entry 0x%02x, its algorithm (%s) is one this"
-                                    + " library cannot encode for",
-                            operation, entry, algorithm.oid), null);
-                    continue;
+                            "%s: no row avoids compute-signature, using a signing row"
+                                    + " for %s", operation, key), null);
                 }
-                return new SecurityEnvironment(algorithm.mseSetObject(), key.keyReference,
-                        key.rsa, algorithm.needsHostDigestInfo(),
-                        SignatureAlgorithm.forOid(algorithm.oid),
-                        SecurityEnvironment.Source.CARD);
+                return any;
             }
             LoggingUtil.Companion.debugLog(TAG, String.format(
                     "%s: %s declares no algorithm that can do it", operation, key), null);
@@ -681,7 +732,66 @@ abstract class Idemia implements Token {
         return null;
     }
 
-    /** EF.TokenInfo's algorithm table, read once per session. */
+    /**
+     * The first row of {@code key} that can serve {@code operation}, or {@code null}.
+     *
+     * @param avoidSigningRows skip rows that advertise compute-signature. A row that
+     *                         did not say what it supports counts as one, since
+     *                         {@code supports} reads silence permissively and this
+     *                         pass is the one that should be strict.
+     */
+    private SecurityEnvironment environmentFor(
+            SigningOperation operation, Pkcs15SecurityEnvironment.Key key,
+            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table,
+            boolean avoidSigningRows) {
+        for (Integer entry : key.algorithmEntries) {
+            Pkcs15SecurityEnvironment.Algorithm algorithm = table.get(entry);
+            if (algorithm == null || !algorithm.supports(operation.operationMask)) {
+                continue;
+            }
+            if (avoidSigningRows && algorithm.supports(
+                    Pkcs15SecurityEnvironment.OPERATION_COMPUTE_SIGNATURE)) {
+                continue;
+            }
+            if (key.rsa && !algorithm.rsaEncodingIsUnderstood()) {
+                // The row names a hash this library does not know, and for RSA
+                // the card builds the PKCS#1 encoding from that hash. Using it
+                // would mean sending a digest of one kind and having it encoded
+                // as another — a signature that verifies nowhere. Skip the row;
+                // another may serve.
+                LoggingUtil.Companion.debugLog(TAG, String.format(
+                        "%s: skipping entry 0x%02x, its algorithm (%s) is one this"
+                                + " library cannot encode for",
+                        operation, entry, algorithm.oid), null);
+                continue;
+            }
+            // needsHostDigestInfo is gated on the key type for the same reason
+            // rsaEncodingIsUnderstood is, above: it asks whether the caller must
+            // build a PKCS#1 encoding, which is a question about RSA only. The row
+            // and the key are read from different files, so an EC key citing an
+            // rsaEncryption row would otherwise have a DigestInfo wrapped around an
+            // EC digest — and nothing downstream would say so, since the length
+            // guard returns early for EC and the signing path is not verified. No
+            // card does this; the gate is here so that one could not.
+            return new SecurityEnvironment(algorithm.mseSetObject(), key.keyReference,
+                    key.rsa, key.rsa && algorithm.needsHostDigestInfo(),
+                    SignatureAlgorithm.forOid(algorithm.oid),
+                    SecurityEnvironment.Source.CARD);
+        }
+        return null;
+    }
+
+    /**
+     * EF.TokenInfo's algorithm table, read once per session.
+     *
+     * <p><b>The caller must already have selected the applet {@code context}
+     * names.</b> This method does not select it: the read is a bare SELECT by file
+     * id under whatever DF is current, and {@code context} is used only as the
+     * cache key. Passing a context that does not match what is selected files one
+     * applet's table under the other's name — a wrong answer with nothing to
+     * report it, rather than a failure. Every caller selects first; this says so
+     * because the signature reads as though it would.
+     */
     private Map<Integer, Pkcs15SecurityEnvironment.Algorithm> algorithmTable(
             AppletContext context) throws SmartCardReaderException {
         Map<Integer, Pkcs15SecurityEnvironment.Algorithm> cached = algorithmTables.get(context);
@@ -863,6 +973,40 @@ abstract class Idemia implements Token {
             // ECDSA signs the value it is given without encoding a hash identifier
             // into it, so a length that does not match the curve is the caller's
             // business, not a corruption.
+            //
+            // What that leaves open, precisely:
+            //
+            // On authentication, nothing. authenticationInput sends the caller's
+            // bytes unchanged and verifySignature checks the signature against
+            // those same bytes, so card and verifier agree at any length.
+            //
+            // On signing, two different things, and only one of them is a wrong
+            // value. Where the row's named digest fits the key's curve, widening
+            // is value-preserving — see padWithZeroes — so a 32-byte digest on a
+            // P-384 key is signed as the integer the caller chose. What is wrong
+            // there is the label: the token says ES384 over a SHA-256 digest,
+            // which is the mislabelling the RSA branch below refuses. Where the
+            // named digest is *wider than the curve* — a row naming ES384 for a
+            // P-256 key, or the null branch's 48 for one — padding overshoots,
+            // the card keeps the leftmost field-size bits, and it signs sixteen
+            // zero bytes and half the digest. That one is a value nobody chose,
+            // on the one path verifySignature does not cover.
+            //
+            // The two are never compared. The width comes from the card's row and
+            // the label from the certificate's curve — permittedAlgorithms asks
+            // the certificate and never the card for EC.
+            //
+            // Comparing them would cost no card read: `certificates` is right here,
+            // and verifySignature already reads it that way — look if one is in
+            // hand, skip silently if not. What it would cost is being inert where
+            // it matters. The map holds only what a caller asked for in this
+            // session, and the consumer signs on its own tap: its sign operation
+            // calls calculateSignature without reading a certificate first, so the
+            // map is empty exactly when a document is being signed. A clamp here
+            // would fire only in sessions the application does not create, while
+            // changing the wire in a case no capture exercises. So this waits on
+            // the same question as the digest the caller is handed, not on the cost
+            // of looking.
             return;
         }
         SignatureAlgorithm named = environment.namedAlgorithm();
@@ -1406,9 +1550,17 @@ abstract class Idemia implements Token {
      * already that long or longer.
      *
      * <p>Left-padding keeps the value: an ECDSA input is an integer, and leading
-     * zeroes do not change it. Widening to the digest length of the algorithm the key
-     * signs with can never overshoot the curve, because JWA pairs each curve with a
-     * hash no longer than its field — see the call site for why the width matters.
+     * zeroes do not change it. That holds whatever {@code width} is, which is why
+     * widening to a digest the key's own curve is paired with is safe — JWA pairs
+     * each curve with a hash no longer than its field, so the padded value stays
+     * inside it.
+     *
+     * <p>That is a guarantee about <em>a curve's own</em> algorithm, and not an
+     * invariant of this method. Widen past the key's field — a row naming ES384 for
+     * a P-256 key — and the card keeps the leftmost field-size bits, which is zeroes
+     * and part of the digest rather than the digest. Nothing here can tell: the
+     * caller passes a width, not a curve. See the call site, and the note in
+     * {@code requireDigestFitsAlgorithm} for why the two are not compared.
      *
      * @param hash the digest that needs to be signed
      * @param width the length to pad up to, in bytes

@@ -2,6 +2,7 @@ package ee.ria.DigiDoc.idcard;
 
 import static com.google.common.truth.Truth.assertThat;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
@@ -81,7 +82,7 @@ public final class SecurityEnvironmentResolutionTest {
     @Test
     public void latvianCardsAreAskedAndTheAnswerComesFromTheCard() throws Exception {
         var fixture = ReplayFixture.lv()
-                .with(r -> LvCardMetadata.scriptQscd(r, false))
+                .with(r -> LvCardMetadata.scriptQscd(r))
                 .tunnel();
 
         SecurityEnvironment signing =
@@ -208,7 +209,7 @@ public final class SecurityEnvironmentResolutionTest {
     @Test
     public void theAnswerIsResolvedOncePerOperation() throws Exception {
         var fixture = ReplayFixture.lv()
-                .with(r -> LvCardMetadata.scriptQscd(r, false))
+                .with(r -> LvCardMetadata.scriptQscd(r))
                 .tunnel();
 
         SecurityEnvironment first = fixture.token.securityEnvironment(SigningOperation.SIGN);
@@ -219,13 +220,19 @@ public final class SecurityEnvironmentResolutionTest {
     }
 
     /**
-     * Decrypt resolves through the same path. On an EC card the row it needs
-     * advertises {@code derive-key} rather than {@code decipher}, since the
-     * primitive is ECDH key agreement — requiring only {@code decipher} made this
-     * unresolvable.
+     * Decrypt resolves through the same path, and lands on the key-agreement row.
+     *
+     * <p>On an EC card that row advertises {@code derive-key} rather than
+     * {@code decipher}, since the primitive is ECDH — requiring only
+     * {@code decipher} made decrypt unresolvable. But accepting either bit is not
+     * enough to <em>identify</em> it: every signing row on this card advertises
+     * derive-key too, so the mask matches all thirteen entries and the row has to
+     * be chosen by the bit it does not set. Entry 13 is {@code 80 01 0b}; entry 7,
+     * which the mask would otherwise reach first, is the {@code 80 01 04} that
+     * authentication stages.
      */
     @Test
-    public void decryptResolvesOnAnEcCardWhereTheRowSaysDeriveKey() throws Exception {
+    public void decryptResolvesToTheKeyAgreementRowNotTheFirstMatchingOne() throws Exception {
         var fixture = ReplayFixture.lv()
                 .with(LvCardMetadata::scriptOberthur)
                 .tunnel();
@@ -234,7 +241,78 @@ public final class SecurityEnvironmentResolutionTest {
                 fixture.token.securityEnvironment(SigningOperation.DECRYPT);
 
         assertThat(decrypt.source()).isEqualTo(SecurityEnvironment.Source.CARD);
-        assertThat(Hex.toHexString(decrypt.mseSetBody())).isEqualTo("800104" + "840182");
+        assertThat(Hex.toHexString(decrypt.mseSetBody())).isEqualTo("80010b" + "840182");
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * An EC key citing an RSA row is not handed a DigestInfo.
+     *
+     * <p>The key type comes from the key directory and the encoding question from
+     * the algorithm row's OID — different files, read separately. A row of plain
+     * {@code rsaEncryption} means "the caller builds the PKCS#1 encoding", which is
+     * true only of RSA keys; applied to an EC key it would wrap an EC digest in a
+     * DigestInfo and send it to be signed. Nothing downstream would notice: the
+     * length guard returns early for EC, and the signing path is not verified.
+     *
+     * <p>No captured card cites a row of the wrong family, so the table is built
+     * for the purpose: the <em>real</em> Latvian EC key directory, unchanged, whose
+     * entry list leads with 7 — paired with a table whose entry 7 is the
+     * {@code rsaEncryption} row instead of the ECDSA one. Only the row is
+     * synthetic, and it is shaped byte for byte like the captured rows.
+     */
+    @Test
+    public void anEcKeyCitingAnRsaRowIsNotAskedToBuildADigestInfo() throws Exception {
+        // 30 { A2 { 30 { INTEGER 7, INTEGER 40, NULL, BITSTRING 00 51,
+        //               OID rsaEncryption, INTEGER 02 } } }
+        String tokenInfo =
+                "301ea21c301a02010702014005000302005106092a864886f70d010101020102";
+
+        var fixture = ReplayFixture.lv()
+                .with(r -> {
+                    r.expectFileRead("5032", tokenInfo);
+                    r.expectFileRead("5031", LvCardMetadata.OBERTHUR_EF_OD);
+                    r.expectFileRead("7002", LvCardMetadata.AUTH_PRKD);
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
+                })
+                .tunnel();
+
+        SecurityEnvironment resolved =
+                fixture.token.securityEnvironment(SigningOperation.AUTHENTICATE);
+
+        assertThat(resolved.isRsa()).isFalse();
+        assertThat(resolved.needsHostDigestInfo()).isFalse();
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * The same on the 2020 RSA card, where the two candidate rows are
+     * indistinguishable by algorithm.
+     *
+     * <p>Entry 5 and entry 6 both carry {@code rsaEncryption}, so nothing but the
+     * operation bits separates the signing row from the decipher one: entry 5 is
+     * {@code compute-signature+verify+derive-key}, entry 6 is
+     * {@code encipher+decipher+derive-key}. That is why the preference is written
+     * against the absent bit rather than against the algorithm — an OID-based rule
+     * could not tell these two apart. Entry 6 is {@code 80 01 1a}; entry 5, the
+     * first match, is the {@code 80 01 02} raw-RSA row authentication uses.
+     */
+    @Test
+    public void decryptOnAnRsaCardResolvesToTheDecipherRowNotTheSigningOne() throws Exception {
+        var fixture = ReplayFixture.lvSeid()
+                .with(r -> {
+                    r.expectFileRead("5032", RsaCardMetadata.TOKEN_INFO_OBERTHUR);
+                    r.expectFileRead("5031", RsaCardMetadata.AUTH_EF_OD);
+                    r.expectFileRead("7002", RsaCardMetadata.AUTH_PRKD);
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
+                })
+                .tunnel();
+
+        SecurityEnvironment decrypt =
+                fixture.token.securityEnvironment(SigningOperation.DECRYPT);
+
+        assertThat(decrypt.source()).isEqualTo(SecurityEnvironment.Source.CARD);
+        assertThat(Hex.toHexString(decrypt.mseSetBody())).isEqualTo("80011a" + "840181");
         fixture.assertAllConsumed();
     }
 }

@@ -636,13 +636,24 @@ explicit `Le`.
 >
 > File ID, transparent-EF descriptor and life-cycle byte are all correct,
 > and `READ BINARY` at offset 0 then returns a single `0x00` byte — so the
-> size is not detectable from the SW either. The Android lib therefore only
-> keeps the Form A result when the declared size is plausible for a
-> certificate (≥ 256 bytes) **and** the bytes read begin a DER `SEQUENCE`
-> whose length is fully present; otherwise it re-SELECTs with `P2 = 0C` and
-> falls back to Form B. The verdict is remembered for the rest of the card
-> session, so only the first certificate read on an affected card pays for
-> the probe. Port that guard, not just the fast path.
+> size is not detectable from the SW either. The Android lib therefore treats
+> the two ways Form A can disappoint you **differently**, and this is the part
+> worth porting carefully:
+>
+> - A declared size **too small for a certificate** (< 256 bytes) is taken as
+>   the truth. The file is empty, so that location is abandoned and the next one
+>   tried — with **no** re-SELECT and **no** Form B read. That is the whole
+>   saving, and the paragraph below is why: Form B would return the same short
+>   answer.
+> - Only an **inconclusive** answer falls back to Form B under `P2 = 0C`: no
+>   size tag at all, a rejected `P2 = 04`, or a bounded read whose bytes do not
+>   begin a DER `SEQUENCE` with its length fully present. That verdict is
+>   remembered for the rest of the card session, so only the first certificate
+>   read on an affected card pays for the probe.
+>
+> Port both halves, not just the fast path — and do not collapse them into one
+> guard that always falls back. See §8.1, which reserves the canonical read for
+> genuinely inconclusive answers.
 >
 > **But do not assume Form B recovers the file.** On the LV `SeID` test card
 > observed on 2026-08-06, Form B returns the *same* single `0x00` byte and

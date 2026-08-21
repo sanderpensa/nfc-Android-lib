@@ -129,10 +129,10 @@ public final class IdemiaCodeManagementTest {
     // -------- empty codes never reach the card --------
 
     @Test
-    public void verifyCode_emptyPin_isRefusedWithoutSendingVerify() throws Exception {
+    public void changeCode_emptyCurrentPin_isRefusedWithoutSendingChange() throws Exception {
         // Padding an empty code produces twelve 0xFF bytes, which the card
         // would compare and reject — spending one of the user's retries on a
-        // value nobody typed. The guard has to fire before the VERIFY leaves.
+        // value nobody typed. The guard has to fire before the CHANGE leaves.
         CommandStubReader stub = new CommandStubReader();
         IdemiaWithPace token = new IdemiaWithPace(stub.build());
 
@@ -140,6 +140,29 @@ public final class IdemiaCodeManagementTest {
                 () -> token.changeCode(CodeType.PIN1, new byte[0], "1234".getBytes()));
 
         assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x24)).isTrue();
+    }
+
+    /**
+     * The same guard on the path every signing operation takes.
+     *
+     * <p>{@code changeCode} and {@code unblockAndChangeCode} are the code-management
+     * calls; {@code verifyCode} is the one {@code authenticate},
+     * {@code calculateSignature} and {@code decrypt} all go through, and it is the
+     * one where a spent retry is the user's PIN rather than a management step they
+     * can repeat. Same {@code Codes.padded} call underneath — asserted separately
+     * because the name of a test is how anyone checks whether this path is covered.
+     */
+    @Test
+    public void verifyCode_emptyPin_isRefusedWithoutSendingVerify() throws Exception {
+        CommandStubReader stub = new CommandStubReader();
+        IdemiaWithPace token = new IdemiaWithPace(stub.build());
+
+        assertThrows(CodeFormatException.class,
+                () -> token.authenticate(new byte[0], new byte[48]));
+
+        assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x20)).isTrue();
+        // Nor the operation the PIN was for.
+        assertThat(stub.captured.stream().noneMatch(a -> a.ins == 0x88)).isTrue();
     }
 
     @Test

@@ -22,7 +22,10 @@ import javax.security.auth.x500.X500Principal;
  * The last guard before a signature is handed back: does it verify under the
  * certificate of the key that was supposed to make it?
  *
- * <p>What is done about each verdict is policy and lives in\n * {@code Idemia.verifySignature} — see {@link SignatureVerificationPolicyTest}.\n *\n * <p>Keys are generated here rather than captured. A real card signature is checked
+ * <p>What is done about each verdict is policy and lives in
+ * {@code Idemia.verifySignature} — see {@link SignatureVerificationPolicyTest}.
+ *
+ * <p>Keys are generated here rather than captured. A real card signature is checked
  * end to end by {@link LatviaIdemiaSeIdSessionReplayTest}, which reads a certificate
  * and then authenticates; what these cover is the matrix that one capture cannot —
  * both key types, both DigestInfo arrangements, and the mismatch cases — without
