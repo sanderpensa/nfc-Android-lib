@@ -40,6 +40,10 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        // Needed for BuildConfig.DEBUG, which gates the card logging in
+        // MainActivity: the exchange and the certificate are diagnostic detail, not
+        // something a shipped build should write to the system log.
+        buildConfig = true
     }
 }
 

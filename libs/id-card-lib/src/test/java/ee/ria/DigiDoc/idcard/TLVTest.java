@@ -186,4 +186,74 @@ public final class TLVTest {
 
         assertThat(fileId.getValue()).isEqualTo(new byte[] {0x50, 0x31});
     }
+
+    // ---- a tag that nests further than any card ----
+
+    /**
+     * A pathologically nested value is parsed to a fixed depth and no further.
+     *
+     * <p>This parser sees EF.CardAccess <em>before</em> PACE, in plaintext, so the
+     * bytes need not come from a real card — any tag that answers a SELECT and a READ
+     * BINARY supplies them. Unbounded, about twelve kilobytes of nested containers
+     * overflows the stack, and {@code StackOverflowError} is an {@code Error}: it
+     * passes the {@code catch (SmartCardReaderException)} at the read and the
+     * {@code catch (Exception)} in {@code tunnel}, and takes the NFC callback thread
+     * with it. That is a crash any bystander could cause.
+     *
+     * <p>The assertion is the depth: one container per level, so a tree 32 deep and
+     * no deeper. Whether it also survives is implied — a test that overflowed would
+     * not report a failure, it would kill the run.
+     */
+    @Test
+    public void aValueNestedFurtherThanAnyCardIsParsedToTheCapAndNoFurther() {
+        List<TLV> parsed = TLV.parseAll(nested(4000));
+
+        int depth = 0;
+        List<TLV> level = parsed;
+        while (level != null && !level.isEmpty()) {
+            depth++;
+            level = level.get(0).children;
+        }
+        assertThat(depth).isEqualTo(32);
+    }
+
+    /** Real files stay far inside the cap, so nothing on record is truncated. */
+    @Test
+    public void everyCapturedFileIsNowhereNearTheCap() {
+        for (String file : new String[] {LvCardMetadata.TOKEN_INFO, LvCardMetadata.OBERTHUR_EF_OD,
+                LvCardMetadata.AUTH_PRKD, RsaCardMetadata.TOKEN_INFO_OBERTHUR,
+                RsaCardMetadata.AUTH_EF_OD, RsaCardMetadata.AUTH_PRKD}) {
+            assertThat(depthOf(TLV.parseAll(Hex.decode(file)))).isAtMost(8);
+        }
+    }
+
+    private static int depthOf(List<TLV> records) {
+        int deepest = 0;
+        for (TLV record : records) {
+            int here = 1 + (record.children == null ? 0 : depthOf(record.children));
+            deepest = Math.max(deepest, here);
+        }
+        return deepest;
+    }
+
+    /** {@code depth} nested constructed tags, correctly length-encoded. */
+    private static byte[] nested(int depth) {
+        byte[] inner = new byte[0];
+        for (int i = 0; i < depth; i++) {
+            byte[] header;
+            int length = inner.length;
+            if (length <= 0x7F) {
+                header = new byte[] {(byte) 0xA0, (byte) length};
+            } else if (length <= 0xFF) {
+                header = new byte[] {(byte) 0xA0, (byte) 0x81, (byte) length};
+            } else {
+                header = new byte[] {(byte) 0xA0, (byte) 0x82, (byte) (length >> 8), (byte) length};
+            }
+            byte[] next = new byte[header.length + length];
+            System.arraycopy(header, 0, next, 0, header.length);
+            System.arraycopy(inner, 0, next, header.length, length);
+            inner = next;
+        }
+        return inner;
+    }
 }

@@ -51,10 +51,22 @@ class MainActivity : AppCompatActivity() {
         val binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Debug builds only, and deliberately so — this is the line an integrator
+        // copies. Enabling it turns on the library's APDU logging *and* this app's
+        // own diagnostic lines, and one of those (see CardReaderFragment) writes the
+        // authentication certificate to the system log. An eID certificate carries
+        // the holder's name and personal code, so a release build that left this on
+        // would publish citizen data from every device it ran on, to anything able
+        // to read the log.
+        //
+        // The library itself is quieter than that — post-PACE APDUs are logged as
+        // ciphertext and responses only by status word — so what this really gates
+        // is the diagnostics around it. That is exactly why it should be off by
+        // default rather than switched off later.
         initialize(
             this, Logger.getLogger(
                 NfcSmartCardReaderManager::class.java.name
-            ), true
+            ), BuildConfig.DEBUG
         )
 
         // What an integrator does with IdCardLibrary.version(): report which build

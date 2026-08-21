@@ -61,8 +61,33 @@ public class TLV {
         return new TLV(tag, value, new ArrayList<>());
     }
 
+    /**
+     * How deep this will follow constructed tags.
+     *
+     * <p>Every file this parser is pointed at is a handful of levels deep — the
+     * captured EF.CardAccess, FCI and PKCS#15 files are three to six. This is
+     * several times that, and it is a bound rather than a shape: the recursion is
+     * otherwise limited only by the length of the input, and about twelve kilobytes
+     * of nested containers overflows the stack on a thread with a 512 KB one.
+     *
+     * <p>What makes that reachable rather than theoretical: <b>EF.CardAccess is read
+     * and parsed before PACE</b>, in plaintext — see
+     * {@code IdemiaWithPace.readPaceParametersFromCard}. The bytes therefore do not
+     * have to come from a genuine card. Any tag that answers a SELECT and a READ
+     * BINARY can supply them, and {@code StackOverflowError} is an {@link Error}, so
+     * it passes the {@code catch (SmartCardReaderException)} there and the
+     * {@code catch (Exception)} in {@code tunnel} alike, reaching the NFC callback
+     * thread. A crash on a tag held near the phone is not a failure this library
+     * gets to have.
+     *
+     * <p>The same number, for the same reason, as {@code Pkcs15SecurityEnvironment}'s
+     * {@code MAX_DEPTH} — that parser was bounded first, and leaving this one is what
+     * made the pair inconsistent.
+     */
+    private static final int MAX_DEPTH = 32;
+
     public static List<TLV> parseTLVRecursive(byte[] data) {
-        List<TLV> tlvs = parseTLVRecursive(data, 0, data.length);
+        List<TLV> tlvs = parseTLVRecursive(data, 0, data.length, MAX_DEPTH);
         List<TLV> records = new ArrayList<>();
         for (TLV tlv : tlvs) {
             if (tlv.children != null) {
@@ -74,7 +99,8 @@ public class TLV {
     }
 
     /** @noinspection SameParameterValue*/
-    private static List<TLV> parseTLVRecursive(byte[] data, int start, int end) {
+    private static List<TLV> parseTLVRecursive(
+            byte[] data, int start, int end, int remainingDepth) {
         List<TLV> result = new ArrayList<>();
         int index = start;
 
@@ -136,8 +162,8 @@ public class TLV {
             byte[] value = Arrays.copyOfRange(data, index, index + length);
 
             List<TLV> children = null;
-            if ((firstTagByte & 0x20) != 0) { // constructed based on first byte
-                children = parseTLVRecursive(value, 0, value.length);
+            if ((firstTagByte & 0x20) != 0 && remainingDepth > 1) { // constructed
+                children = parseTLVRecursive(value, 0, value.length, remainingDepth - 1);
             }
 
             result.add(new TLV(tag, value, children));
@@ -163,7 +189,7 @@ public class TLV {
     }
 
     public static List<TLV> parseAll(byte[] data) {
-        return parseTLVRecursive(data, 0, data.length);
+        return parseTLVRecursive(data, 0, data.length, MAX_DEPTH);
     }
 
     public byte[] encode() throws SmartCardReaderException {

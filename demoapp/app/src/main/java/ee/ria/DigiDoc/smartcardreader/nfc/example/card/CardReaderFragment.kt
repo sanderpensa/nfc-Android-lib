@@ -157,6 +157,11 @@ class CardReaderFragment : Fragment() {
                     card.tunnel(dataViewModel.getCan())
                     // Get auth certificate
                     val authCert = card.certificate(CertificateType.AUTHENTICATION)
+                    // The certificate carries the holder's name and personal code, so
+                    // this line is the reason the logging in MainActivity is gated on
+                    // BuildConfig.DEBUG. Useful when you are working out what a card
+                    // holds; not something to ship. If you copy this app as a starting
+                    // point, copy the gate with it — or drop the line.
                     debugLog(logTag, Base64.toBase64String(authCert))
 
                     // Ask once and use the answer for both the name and the hash.
