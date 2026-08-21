@@ -703,31 +703,47 @@ abstract class Idemia implements Token {
         // pass below is the one that runs.
         boolean preferNonSigning = (operation.operationMask
                 & ~Pkcs15SecurityEnvironment.OPERATION_COMPUTE_SIGNATURE) != 0;
+
+        // Two passes over all the keys, not one pass with a fallback per key. A
+        // directory can hold more than one, and if the first holds only signing rows
+        // a per-key fallback would stage one of those and never look at the key that
+        // does declare key agreement. The preference is a property of the card, not
+        // of whichever key was listed first.
+        if (preferNonSigning) {
+            SecurityEnvironment preferred = firstUsableEnvironment(operation, keys, table, true);
+            if (preferred != null) {
+                return preferred;
+            }
+        }
+        SecurityEnvironment any = firstUsableEnvironment(operation, keys, table, false);
+        if (any != null && preferNonSigning) {
+            // Worth a line: this card offers nothing but signing rows for an
+            // operation that is not signing, so the reference staged is a
+            // compromise. Nothing verifies a decipher result locally, so if it
+            // turns out wrong this log is the only trace of why.
+            LoggingUtil.Companion.debugLog(TAG, String.format(
+                    "%s: no key on this card avoids compute-signature, using a signing"
+                            + " row", operation), null);
+        }
+        return any;
+    }
+
+    /** One pass over {@code keys}, either strict about signing rows or not. */
+    private SecurityEnvironment firstUsableEnvironment(
+            SigningOperation operation, List<Pkcs15SecurityEnvironment.Key> keys,
+            Map<Integer, Pkcs15SecurityEnvironment.Algorithm> table, boolean avoidSigningRows) {
         for (Pkcs15SecurityEnvironment.Key key : keys) {
             if (!key.isUsable()) {
                 continue;
             }
-            if (preferNonSigning) {
-                SecurityEnvironment preferred = environmentFor(operation, key, table, true);
-                if (preferred != null) {
-                    return preferred;
-                }
+            SecurityEnvironment found = environmentFor(operation, key, table, avoidSigningRows);
+            if (found != null) {
+                return found;
             }
-            SecurityEnvironment any = environmentFor(operation, key, table, false);
-            if (any != null) {
-                if (preferNonSigning) {
-                    // Worth a line: this card offers nothing but signing rows for an
-                    // operation that is not signing, so the reference staged is a
-                    // compromise. Nothing verifies a decipher result locally, so if
-                    // it turns out wrong this log is the only trace of why.
-                    LoggingUtil.Companion.debugLog(TAG, String.format(
-                            "%s: no row avoids compute-signature, using a signing row"
-                                    + " for %s", operation, key), null);
-                }
-                return any;
+            if (!avoidSigningRows) {
+                LoggingUtil.Companion.debugLog(TAG, String.format(
+                        "%s: %s declares no algorithm that can do it", operation, key), null);
             }
-            LoggingUtil.Companion.debugLog(TAG, String.format(
-                    "%s: %s declares no algorithm that can do it", operation, key), null);
         }
         return null;
     }

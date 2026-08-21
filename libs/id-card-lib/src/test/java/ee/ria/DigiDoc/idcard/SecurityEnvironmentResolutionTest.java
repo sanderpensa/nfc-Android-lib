@@ -246,6 +246,46 @@ public final class SecurityEnvironmentResolutionTest {
     }
 
     /**
+     * Decrypt looks past a key that can only sign, to one that can do key agreement.
+     *
+     * <p>The preference belongs to the card, not to whichever key the directory lists
+     * first. A per-key fallback — strict then permissive, one key at a time — stages a
+     * signing row from the first key and never reaches the second, which is the one
+     * declaring {@code derive-key} alone. No captured PrKD holds two keys, so this
+     * drives a directory built for the purpose: key {@code 0x82} citing only the
+     * signing row, key {@code 0x84} citing that and the key-agreement one.
+     *
+     * <p>Nothing on the card would report the difference — it answers {@code 90 00}
+     * to any reference, and a shared secret cannot be checked locally.
+     */
+    @Test
+    public void decryptSkipsAKeyThatCanOnlySignAndTakesTheOneThatCanAgree() throws Exception {
+        // Entry 07: compute-signature + verify + derive-key, algRef 04.
+        // Entry 0d: derive-key alone, algRef 0b.
+        String tokenInfo = "3034a232301902010702014005000302005106082a8648ce3d040303020104"
+                + "301502010d02014005000302000106042b81040c02010b";
+        // Two EC keys, shaped like the captured entry — A0 { 30 { INTEGER keyRef,
+        // [1] { INTEGER entries } } }. 0x82 cites entry 07 only; 0x84 cites 07 and 0d.
+        String twoKeys = "a00b300902020082a103020107"
+                + "a00e300c02020084a10602010702010d";
+
+        var fixture = ReplayFixture.lv()
+                .with(r -> {
+                    r.expectFileRead("5032", tokenInfo);
+                    r.expectFileRead("5031", LvCardMetadata.OBERTHUR_EF_OD);
+                    r.expectFileRead("7002", twoKeys);
+                    r.expect(TestApdus.SEL_OBERTHUR_AID, ok());
+                })
+                .tunnel();
+
+        SecurityEnvironment decrypt =
+                fixture.token.securityEnvironment(SigningOperation.DECRYPT);
+
+        assertThat(Hex.toHexString(decrypt.mseSetBody())).isEqualTo("80010b" + "840184");
+        fixture.assertAllConsumed();
+    }
+
+    /**
      * An EC key citing an RSA row is not handed a DigestInfo.
      *
      * <p>The key type comes from the key directory and the encoding question from
