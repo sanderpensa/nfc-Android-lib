@@ -48,7 +48,11 @@ class IdemiaPersonalDataParser {
     static PersonalData parse(SparseArray<String> data) {
         String surname = data.get(SURNAME_POS);
         String givenNames = data.get(GIVEN_NAMES_POS);
-        String citizenship = data.get(CITIZENSHIP_POS);
+        // A blank record is the card declining to state a citizenship, which
+        // PersonalData reports as null. Passing "" through would make "did not
+        // say" indistinguishable from a citizenship that is the empty string.
+        String citizenshipRecord = data.get(CITIZENSHIP_POS);
+        String citizenship = citizenshipRecord.isEmpty() ? null : citizenshipRecord;
         String dateAndPlaceOfBirthString = data.get(DATE_AND_PLACE_OF_BIRTH_POS);
         String personalCode = data.get(PERSONAL_CODE_POS);
         String documentNumber = data.get(DOCUMENT_NUMBER_POS);

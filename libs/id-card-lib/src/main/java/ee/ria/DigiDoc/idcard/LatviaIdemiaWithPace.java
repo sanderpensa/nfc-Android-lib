@@ -117,7 +117,7 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
     /**
      * Read personal data from the auth certificate subject and EF 0x5001 (personal code).
      * Latvian eID cards store only the personal code in EF files (DF 0x5000 / EF 0x5001).
-     * Name, issuing country, and document number are extracted from the auth certificate subject:
+     * Name and document number are extracted from the auth certificate subject:
      *   - OID 2.5.4.4  (surname)
      *   - OID 2.5.4.42 (givenName)
      *   - OID 2.5.4.5  (serialNumber) — format "PNOLV-{personalCode}"
