@@ -103,6 +103,18 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
         return true;
     }
 
+    /**
+     * True: on these cards {@code personalData()} reads the authentication
+     * certificate itself, so a caller wanting both it and that certificate would
+     * otherwise read the same ~1.2 KB EF twice under secure messaging in one tap.
+     * Inherited by {@link LatviaIdemiaSeIdWithPace}, which keeps its certificates
+     * elsewhere but reads them the same way.
+     */
+    @Override
+    protected boolean reuseCertificateReadThisSession() {
+        return true;
+    }
+
     // The MSE:SET templates that used to live here are gone deliberately. They
     // were right for the TeID2-marked cards and wrong for at least one SeID-marked
     // one, which uses the four-byte FF xx 08 00 form with the same key references —

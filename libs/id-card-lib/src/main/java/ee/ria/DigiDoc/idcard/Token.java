@@ -42,6 +42,14 @@ public interface Token {
     /**
      * Read personal information of the cardholder.
      *
+     * <p>What the card's own personal-data files state; see {@link PersonalData} for
+     * which fields that is and why a certificate's facts are not among them.
+     *
+     * <p>On Latvian cards this reads the authentication certificate as well, because
+     * those cards keep the holder's name and document number only in its subject.
+     * That read is shared with {@link #certificate}, so asking for both costs one
+     * certificate read in either order.
+     *
      * @return Personal data of the cardholder.
      * @throws SmartCardReaderException When reading failed.
      */
@@ -85,6 +93,16 @@ public interface Token {
 
     /**
      * Read certificate data of the cardholder.
+     *
+     * <p>On Latvian cards a certificate is read from the card once per token and
+     * reused afterwards, so this and {@link #personalData} — which reads the
+     * authentication certificate itself — cost one read between them rather than
+     * two, whichever is called first. The reuse cannot outlive the tap: a token is
+     * built per card detection and never spans two of them, so what comes back was
+     * read from this card, in this session, behind this tunnel.
+     *
+     * <p>Other card models read the card on every call. Either way the returned
+     * array is the caller's own to keep or modify.
      *
      * @param type Type of the certificate.
      * @return Certificate data.

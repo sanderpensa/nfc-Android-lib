@@ -166,8 +166,14 @@ abstract class Idemia implements Token {
     /**
      * Certificates read this session, by type. Kept so an authentication signature
      * can be checked against the key that was supposed to produce it — see
-     * {@link SignatureVerifier}. Only what a caller has already asked for is here;
-     * nothing is read on its account.
+     * {@link SignatureVerifier} — and, where
+     * {@link #reuseCertificateReadThisSession} says so, to answer a second request
+     * for the same certificate without reading the card again. Only what a caller
+     * has already asked for is here; nothing is read on its account.
+     *
+     * <p>Copies, not the arrays handed to callers: a caller that writes into the
+     * certificate it was given must not be able to change what a signature is
+     * checked against, nor what the next caller reads.
      */
     private final Map<CertificateType, byte[]> certificates =
             new EnumMap<>(CertificateType.class);
@@ -264,6 +270,21 @@ abstract class Idemia implements Token {
      */
     @Override
     public byte[] certificate(CertificateType type) throws SmartCardReaderException {
+        if (reuseCertificateReadThisSession()) {
+            byte[] alreadyRead = certificates.get(type);
+            if (alreadyRead != null) {
+                // Logged because the read it replaces is logged: without this line an
+                // LV support log shows one certificate read where the code did two
+                // things, and the EF and size are what identify a personalisation.
+                LoggingUtil.Companion.debugLog(TAG, String.format(
+                        "certificate(%s): reusing the %d bytes already read this session",
+                        type, alreadyRead.length), null);
+                // A copy, so two callers holding "the certificate" cannot be holding
+                // the same array. Cheap next to the card read it replaces.
+                return alreadyRead.clone();
+            }
+        }
+
         List<CertLocation> locations = certificateLocations(type);
         List<String> tried = new ArrayList<>(locations.size() + 1);
         SmartCardReaderException firstFailure = null;
@@ -277,7 +298,7 @@ abstract class Idemia implements Token {
                 try {
                     byte[] certificate = readCertificateAt(location, type);
                     if (certificate != null && looksLikeDerCertificate(certificate)) {
-                        certificates.put(type, certificate);
+                        certificates.put(type, certificate.clone());
                         // Always logged, not only on a fallback: the EF and the
                         // size are what identify a personalisation. 1182 bytes at
                         // AD F1 34 01 is one Latvian card, 1156 at 34 02 another,
@@ -325,7 +346,7 @@ abstract class Idemia implements Token {
             leftMainAid = true;
             byte[] discovered = readCertificateViaPkcs15(type);
             if (discovered != null) {
-                certificates.put(type, discovered);
+                certificates.put(type, discovered.clone());
                 noteKeyUsage(type, discovered);
                 return discovered;
             }
@@ -629,6 +650,30 @@ abstract class Idemia implements Token {
      * {@code 0x07}, {@code 0x0b} and {@code 0x0d}. Only the key directory is
      * missing.
      */
+    /**
+     * Whether a certificate already read this session is handed back without
+     * reading the card again.
+     *
+     * <p>False here, because for most cards the question does not arise: nothing
+     * in the library reads a certificate on its own account, so a second read
+     * means a caller asked twice and meant it.
+     *
+     * <p>Latvian cards are the exception and override this. Their
+     * {@code personalData()} reads the authentication certificate itself — the
+     * subject is where those cards keep the holder's name and document number —
+     * so any caller wanting both personal data and that certificate pays for the
+     * same EF twice, and the second read happens inside the library where no
+     * caller can see or avoid it.
+     *
+     * <p>Safe because a token does not outlive the card it authenticated against:
+     * {@link TokenWithPace#create} builds a new one per tap, no caller retains
+     * one, and construction precedes {@code tunnel()}. Bytes in the map can only
+     * have come from this card, in this session, behind this tunnel.
+     */
+    protected boolean reuseCertificateReadThisSession() {
+        return false;
+    }
+
     protected boolean resolveSecurityEnvironmentFromCard() {
         return false;
     }

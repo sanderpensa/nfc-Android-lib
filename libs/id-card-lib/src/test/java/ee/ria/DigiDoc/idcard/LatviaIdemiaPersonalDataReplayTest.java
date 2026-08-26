@@ -63,6 +63,32 @@ public final class LatviaIdemiaPersonalDataReplayTest {
     }
 
     /**
+     * The auth certificate {@code personalData()} read is handed straight back to a
+     * caller that asks for it, rather than read off the card a second time.
+     *
+     * <p>The transcript holds exactly one certificate read. If the second call went
+     * to the card it would find no APDUs left and fail there; {@code
+     * assertAllConsumed} then proves the opposite — that the transcript was
+     * consumed exactly once, with nothing left over and nothing asked for twice.
+     */
+    @Test
+    public void certificate_afterPersonalData_reusesTheReadRatherThanRepeatingIt()
+            throws Exception {
+        var fixture = ReplayFixture.lv()
+                .with(LatviaIdemiaPersonalDataReplayTest::loadPersonalDataTranscript)
+                .tunnel();
+
+        PersonalData pd = fixture.token.personalData();
+        byte[] certificate = fixture.token.certificate(CertificateType.AUTHENTICATION);
+
+        // The same certificate the personal data came out of, not a second one.
+        assertThat(certificate).isNotNull();
+        assertThat(pd.surname()).isEqualTo("PARAUDZIŅA");
+
+        fixture.assertAllConsumed();
+    }
+
+    /**
      * Post-PACE personal data + cert read transcript. The certificate read
      * uses the FCI form: SELECT cert with P2 = 0x04, parse size from FCI
      * tag 0x80 (1182 bytes), then READ BINARY at {@code Le = 0xE5} chunks
