@@ -27,6 +27,17 @@ import java.time.LocalDate;
 
 /**
  * Personal data file contents.
+ *
+ * <p><b>What the card's own personal-data files state, and nothing else.</b> A field
+ * belongs here because at least one card model reads it from a file; a model that
+ * does not state it answers {@code null}. Certificate facts — the subject's country,
+ * a validity window — are not personal data and are not here: a caller wanting them
+ * has the certificate, from {@link Token#certificate}.
+ *
+ * <p>One exception, called out where it happens: Latvian cards fill
+ * {@code surname}, {@code givenNames} and {@code documentNumber} from their
+ * authentication certificate, because those are fields other models do state and the
+ * LV card states them nowhere else. See {@code LatviaIdemiaWithPace.personalData()}.
  */
 @AutoValue
 public abstract class PersonalData {
@@ -36,23 +47,12 @@ public abstract class PersonalData {
     public abstract String givenNames();
 
     /**
-     * Cardholder's actual citizenship as read from the on-card personal-data
-     * file. Populated for cards that expose this field (Estonian IDEMIA /
-     * Thales). Empty string for cards that don't expose authoritative
-     * citizenship over NFC (e.g. Latvian IDEMIA — see {@link #issuingCountry()}).
+     * Cardholder's citizenship.
+     *
+     * <p>Null rather than an empty string where a card does not state it: "did not
+     * say" and "said nothing" are different answers, and only the first is true.
      */
-    public abstract String citizenship();
-
-    /**
-     * ISO 3166-1 alpha-2 country code of the certificate issuer (cert subject
-     * RDN {@code C}). Populated for cards where this is parsed during
-     * personalData() — currently Latvian IDEMIA. Null for cards that don't
-     * read the cert as part of personal-data extraction. Note: this is the
-     * issuing country, NOT the cardholder's citizenship; in practice they
-     * coincide for citizen-issued eID, but a foreign resident's card would
-     * still carry the issuer's country code here.
-     */
-    @Nullable public abstract String issuingCountry();
+    @Nullable public abstract String citizenship();
 
     @Nullable public abstract LocalDate dateOfBirth();
 
@@ -61,31 +61,20 @@ public abstract class PersonalData {
     public abstract String documentNumber();
 
     /**
-     * Expiry date of the physical document (printed on the card), read from the
-     * personal-data EF. Populated for cards that expose this field — Estonian
-     * IDEMIA / Thales. Null for cards that don't (e.g. Latvian IDEMIA, which
-     * does not expose document expiry over NFC).
+     * Expiry date of the physical document, as printed on the card.
+     *
+     * <p>Not a certificate's validity window — a card can outlive its certificates,
+     * and the two answer different questions.
      */
     @Nullable public abstract LocalDate documentExpiryDate();
 
-    /**
-     * Expiry date of the on-card authentication certificate ({@code notAfter}).
-     * Populated for cards where this is parsed during personalData() — currently
-     * Latvian IDEMIA. Null for cards that don't read the cert as part of
-     * personal-data extraction (Estonian IDEMIA / Thales). Note that the cert
-     * expiry is typically shorter than the document expiry.
-     */
-    @Nullable public abstract LocalDate certExpiryDate();
-
     public abstract CardType cardType();
 
-    static PersonalData create(String surname, String givenNames, String citizenship,
-                               @Nullable String issuingCountry, @Nullable LocalDate dateOfBirth,
+    static PersonalData create(String surname, String givenNames,
+                               @Nullable String citizenship, @Nullable LocalDate dateOfBirth,
                                String personalCode, String documentNumber,
-                               @Nullable LocalDate documentExpiryDate,
-                               @Nullable LocalDate certExpiryDate, CardType cardType) {
-        return new AutoValue_PersonalData(surname, givenNames, citizenship, issuingCountry,
-                dateOfBirth, personalCode, documentNumber, documentExpiryDate, certExpiryDate,
-                cardType);
+                               @Nullable LocalDate documentExpiryDate, CardType cardType) {
+        return new AutoValue_PersonalData(surname, givenNames, citizenship,
+                dateOfBirth, personalCode, documentNumber, documentExpiryDate, cardType);
     }
 }

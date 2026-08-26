@@ -18,11 +18,11 @@ import org.junit.jupiter.api.Test;
  *       sequence for EF 0x5001 (personal code).</li>
  *   <li>Chunked READ BINARY for EF.AACE (the auth certificate), 6 chunks
  *       at 0x00E7 offsets, terminated by 6B00 EOF.</li>
- *   <li>X.509 cert parse + RDN extraction (surname, given name, serialNumber,
- *       country) using BouncyCastle.</li>
+ *   <li>X.509 cert parse + RDN extraction (surname, given name, serialNumber)
+ *       using BouncyCastle.</li>
  *   <li>LV personal-code → date-of-birth mapping in {@code LatviaPersonalDataParser}.</li>
- *   <li>The PersonalData schema split (citizenship vs issuingCountry,
- *       documentExpiryDate vs certExpiryDate).</li>
+ *   <li>That the fields this card does not state come back null — citizenship and
+ *       document expiry — rather than as blanks or a neighbouring value.</li>
  * </ul>
  *
  * <p>The mock intercepts at {@code transmit(int,int,int,int,byte[],Integer)}
@@ -52,14 +52,12 @@ public final class LatviaIdemiaPersonalDataReplayTest {
         assertThat(pd.givenNames()).isEqualTo("MĀRA");
         assertThat(pd.personalCode()).isEqualTo("326305-17052");
         assertThat(pd.documentNumber()).isEqualTo("PNOLV-326305-17052");
-        assertThat(pd.issuingCountry()).isEqualTo("LV");
         assertThat(pd.cardType()).isEqualTo(CardType.LATVIA_IDEMIA);
-        // X.509 notAfter in UTC — matches log "certExpiry=2031-02-16".
-        assertThat(pd.certExpiryDate().toString()).isEqualTo("2031-02-16");
-        // LV cards don't expose document expiry over NFC.
+        // Both null because the card states neither: no document expiry over NFC,
+        // and no citizenship. The certificate's own expiry is not here at all — it
+        // is a fact about the certificate, which the caller already holds.
         assertThat(pd.documentExpiryDate()).isNull();
-        // CA's country, not citizenship — see LatviaIdemiaWithPace.personalData() javadoc.
-        assertThat(pd.citizenship()).isEmpty();
+        assertThat(pd.citizenship()).isNull();
 
         fixture.assertAllConsumed();
     }

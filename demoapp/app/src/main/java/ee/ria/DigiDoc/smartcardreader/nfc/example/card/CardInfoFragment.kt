@@ -44,6 +44,7 @@ class CardInfoFragment : Fragment() {
     private lateinit var documentNumberTextView: TextView
     private lateinit var citizenshipTextView: TextView
     private lateinit var dateOfExpiryTextView: TextView
+    private lateinit var certExpiryTextView: TextView
     private lateinit var cardTypeTextView: TextView
     private lateinit var pin1TextView: TextView
     private lateinit var pin2TextView: TextView
@@ -67,6 +68,7 @@ class CardInfoFragment : Fragment() {
         documentNumberTextView = binding.textViewDocumentNumber
         citizenshipTextView = binding.textViewCitizenship
         dateOfExpiryTextView = binding.textViewExpirationDate
+        certExpiryTextView = binding.textViewCertExpiry
         cardTypeTextView = binding.textViewCardType
         pin1TextView = binding.textViewPin1
         pin2TextView = binding.textViewPin2
@@ -94,20 +96,17 @@ class CardInfoFragment : Fragment() {
             getString(R.string.date_of_birth, dataViewModel.getDateOfBirth() ?: "-")
         documentNumberTextView.text =
             getString(R.string.document_number, dataViewModel.getDocumentNumber())
-        val citizenship = dataViewModel.getCitizenship()
-        val issuingCountry = dataViewModel.getIssuingCountry()
-        citizenshipTextView.text = when {
-            citizenship.isNotEmpty() -> getString(R.string.citizenship, citizenship)
-            !issuingCountry.isNullOrEmpty() -> getString(R.string.issuing_country, issuingCountry)
-            else -> getString(R.string.citizenship, "-")
-        }
-        val docExpiry = dataViewModel.getDocumentExpiryDate()
-        val certExpiry = dataViewModel.getCertExpiryDate()
-        dateOfExpiryTextView.text = when {
-            docExpiry != null -> getString(R.string.document_expiry, docExpiry)
-            certExpiry != null -> getString(R.string.cert_expiry, certExpiry)
-            else -> getString(R.string.expiration, "-")
-        }
+        // Each row shows what its own source states, or a dash. The two expiries are
+        // separate rows because they are separate facts from separate places: the
+        // document's date comes from the card's personal-data file, the certificate's
+        // from the certificate. A Latvian card has only the second; an Estonian one
+        // only the first.
+        citizenshipTextView.text = getString(
+            R.string.citizenship, dataViewModel.getCitizenship() ?: "-")
+        dateOfExpiryTextView.text = getString(
+            R.string.document_expiry, dataViewModel.getDocumentExpiryDate() ?: "-")
+        certExpiryTextView.text = getString(
+            R.string.cert_expiry, dataViewModel.getCertExpiryDate() ?: "-")
         cardTypeTextView.text = getString(R.string.card_type, dataViewModel.getCardType())
 
         pin1TextView.text = getString(R.string.pin1_counter, dataViewModel.getPin1Counter())

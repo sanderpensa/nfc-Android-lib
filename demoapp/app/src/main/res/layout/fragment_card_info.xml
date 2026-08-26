@@ -96,7 +96,19 @@
                 android:layout_marginHorizontal="10dp"
                 android:layout_marginVertical="10dp"
                 android:fontFamily="sans-serif-black"
-                android:text="@string/expiration"
+                android:text="@string/document_expiry"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/textView_certExpiry"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="10dp"
+                android:layout_marginVertical="10dp"
+                android:fontFamily="sans-serif-black"
+                android:text="@string/cert_expiry"
                 android:textColor="@color/text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />

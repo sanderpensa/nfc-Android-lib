@@ -27,11 +27,19 @@ class DataViewModel : ViewModel() {
     private var givenNames: String = ""
     private var surname: String = ""
     private var personalCode: String = ""
-    private var citizenship: String = ""
-    private var issuingCountry: String? = null
+    private var citizenship: String? = null
     private var dateOfBirth: String? = null
     private var documentNumber: String = ""
     private var documentExpiryDate: String? = null
+
+    /**
+     * Derived from the authentication certificate, not from [PersonalData].
+     *
+     * The library reports what the card's personal-data files state; a certificate's
+     * validity is a fact about the certificate. An integrator wanting it does what
+     * this app does — reads the certificate it already has and looks. Worth showing
+     * because on a Latvian card it is the only expiry there is.
+     */
     private var certExpiryDate: String? = null
     private var cardType: String = ""
     private var containerName: String = ""
@@ -55,16 +63,23 @@ class DataViewModel : ViewModel() {
         this.can = ""
     }
 
+    /**
+     * Replaces every card fact held here. This model is scoped to the activity, so it
+     * outlives the fragment and survives one tap to the next — a field this does not
+     * overwrite is a field showing the previous card's value.
+     *
+     * [certExpiryDate] does not come from [PersonalData], so it is cleared here and
+     * set separately by whoever read the certificate.
+     */
     fun setUserValues(cardData: PersonalData) {
         this.givenNames = cardData.givenNames()
         this.surname = cardData.surname()
         this.personalCode = cardData.personalCode()
         this.citizenship = cardData.citizenship()
-        this.issuingCountry = cardData.issuingCountry()
         this.dateOfBirth = cardData.dateOfBirth()?.toString()
         this.documentNumber = cardData.documentNumber()
         this.documentExpiryDate = cardData.documentExpiryDate()?.toString()
-        this.certExpiryDate = cardData.certExpiryDate()?.toString()
+        this.certExpiryDate = null
         this.cardType = cardData.cardType().name
     }
 
@@ -84,12 +99,8 @@ class DataViewModel : ViewModel() {
         return personalCode
     }
 
-    fun getCitizenship(): String {
+    fun getCitizenship(): String? {
         return citizenship
-    }
-
-    fun getIssuingCountry(): String? {
-        return issuingCountry
     }
 
     fun getDateOfBirth(): String? {
@@ -102,6 +113,10 @@ class DataViewModel : ViewModel() {
 
     fun getDocumentExpiryDate(): String? {
         return documentExpiryDate
+    }
+
+    fun setCertExpiryDate(certExpiryDate: String?) {
+        this.certExpiryDate = certExpiryDate
     }
 
     fun getCertExpiryDate(): String? {

@@ -64,6 +64,7 @@ import java.io.ByteArrayInputStream
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.time.ZoneOffset
 
 /**
  * CardReaderFragment is direct integration point with NFC library
@@ -326,6 +327,34 @@ class CardReaderFragment : Fragment() {
 
                     val pin2counter = card.codeRetryCounter(CodeType.PIN2)
                     dataViewModel.setPin2Counter(pin2counter)
+
+                    // The certificate's expiry, read from the certificate.
+                    // personalData() reports what the card's own files state, and a
+                    // validity window is not one of those — so an integrator who
+                    // wants it reads it here, at the cost of a certificate read.
+                    // On a Latvian card it is the only expiry available at all.
+                    //
+                    // Last, and in its own catch, because it is the one optional part
+                    // of this screen. A card whose authentication certificate cannot
+                    // be read still has personal data and PIN counters worth showing,
+                    // and the row simply reads "-". catch (Exception) rather than
+                    // SmartCardReaderException: CertificateFactory throws
+                    // CertificateException and the cast can throw ClassCastException,
+                    // neither of which Kotlin makes anyone declare — and an exception
+                    // escaping this lambda leaves the NFC binder thread with no result
+                    // set and the UI on the spinner for good.
+                    try {
+                        val authCert = card.certificate(CertificateType.AUTHENTICATION)
+                        val x509 = CertificateFactory.getInstance("X.509")
+                            .generateCertificate(ByteArrayInputStream(authCert))
+                                as X509Certificate
+                        // UTC, so the shown date does not move with the timezone.
+                        dataViewModel.setCertExpiryDate(
+                            x509.notAfter.toInstant().atZone(ZoneOffset.UTC)
+                                .toLocalDate().toString())
+                    } catch (ex: Exception) {
+                        errorLog(logTag, "Could not read the certificate's expiry", ex)
+                    }
 
                     setReaderResult(R.drawable.success)
                     runOnUiAfterDelay {

@@ -74,11 +74,10 @@ public final class LatviaIdemiaPersonalDataTest {
         assertThat(pd.givenNames()).isEqualTo(givenName);
         assertThat(pd.personalCode()).isEqualTo(personalCode);
         assertThat(pd.documentNumber()).isEqualTo("PNOLV-" + personalCode);
-        // citizenship is intentionally empty for LV (not exposed over NFC)
-        assertThat(pd.citizenship()).isEmpty();
-        assertThat(pd.issuingCountry()).isEqualTo(country);
+        // Null, not empty: the LV card does not expose citizenship over NFC, and
+        // "did not state it" is a different answer from "stated nothing".
+        assertThat(pd.citizenship()).isNull();
         assertThat(pd.dateOfBirth()).isEqualTo(LocalDate.of(1985, 3, 15));
-        assertThat(pd.certExpiryDate()).isEqualTo(LocalDate.of(2030, 5, 1));
         // documentExpiryDate is intentionally null for LV (not on card)
         assertThat(pd.documentExpiryDate()).isNull();
         assertThat(pd.cardType()).isEqualTo(CardType.LATVIA_IDEMIA);
@@ -100,10 +99,16 @@ public final class LatviaIdemiaPersonalDataTest {
         assertThat(pd.dateOfBirth()).isNull();
     }
 
+    /**
+     * A certificate subject without a country RDN changes nothing.
+     *
+     * <p>The subject's {@code C} is the CA's country, not the holder's, so nothing
+     * reports it and its absence costs nothing. What this pins is that the fields
+     * the card does state still come back when it is missing.
+     */
     @Test
-    public void personalData_emptyCountryRdn_issuingCountryIsNull() throws Exception {
-        // If the cert subject doesn't carry C, issuingCountry must be null
-        // (not the empty string) — that's the contract callers branch on.
+    public void personalData_certificateWithoutCountryRdn_stillReportsWhatTheCardStates()
+            throws Exception {
         String personalCode = "150385-12345";
         X509Certificate cert = buildCert("Doe", "Jane", "PNOLV-" + personalCode,
                 "LV0000001", /*country*/ null, LocalDate.of(2030, 1, 1));
@@ -112,7 +117,10 @@ public final class LatviaIdemiaPersonalDataTest {
         LatviaIdemiaWithPace token = new LatviaIdemiaWithPace(reader);
 
         PersonalData pd = token.personalData();
-        assertThat(pd.issuingCountry()).isNull();
+
+        assertThat(pd.personalCode()).isEqualTo(personalCode);
+        assertThat(pd.surname()).isEqualTo("Doe");
+        assertThat(pd.citizenship()).isNull();
     }
 
     @Test

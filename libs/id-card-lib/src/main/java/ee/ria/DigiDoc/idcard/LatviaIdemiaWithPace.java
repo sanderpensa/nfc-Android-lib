@@ -121,13 +121,15 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
      *   - OID 2.5.4.4  (surname)
      *   - OID 2.5.4.42 (givenName)
      *   - OID 2.5.4.5  (serialNumber) — format "PNOLV-{personalCode}"
-     *   - C (2.5.4.6)  — issuing country of the certificate authority. Mapped
-     *     to {@link PersonalData#issuingCountry()}, NOT to citizenship: the
-     *     value is the CA's country (always "LV" here), and a foreign resident
-     *     could in principle hold an LV-issued card. Citizenship is left empty
-     *     because the LV card does not expose it over NFC.
-     * Cert expiry comes from the certificate's notAfter; document expiry is
-     * not exposed by Latvian IDEMIA cards over NFC, so it is left null.
+     *
+     * <p>Surname, given name and document number are certificate derivations standing
+     * in for fields other card models read from a file — the only reason a
+     * certificate is parsed here at all; see {@link PersonalData}. Anything the
+     * certificate says that no card states belongs to the caller, which has the
+     * certificate.
+     *
+     * <p>Citizenship and document expiry are null: these cards state neither over
+     * NFC.
      */
     @Override
     public PersonalData personalData() throws SmartCardReaderException {
@@ -156,26 +158,21 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
 
             String surname = rdnString(subject, BCStyle.SURNAME);
             String givenName = rdnString(subject, BCStyle.GIVENNAME);
-            String issuingCountryRaw = rdnString(subject, BCStyle.C);
-            String issuingCountry = issuingCountryRaw.isEmpty() ? null : issuingCountryRaw;
             String serialNumber = rdnString(subject, BCStyle.SERIALNUMBER);
-
-            // X.509 notAfter is a UTC instant — interpret in UTC so the displayed
-            // date is the same regardless of device timezone, matching openssl
-            // and other PKI-tooling conventions.
-            LocalDate certExpiryDate = x509.getNotAfter().toInstant()
-                .atZone(ZoneOffset.UTC).toLocalDate();
 
             LocalDate dateOfBirth = LatviaPersonalDataParser.parseDateOfBirth(personalCode);
 
-            // No PII in logs — names / personal code / document number stay
-            // out per project convention. Cert expiry isn't identifying on
-            // its own and is useful for triaging "card expired" reports.
-            LoggingUtil.Companion.debugLog(TAG,
-                "LV personal data parsed, certExpiry=" + certExpiryDate, null);
+            // Logged, not returned: a certificate fact belongs to whoever holds the
+            // certificate. It earns a log line because "is the card expired" is the
+            // first question a support report has to answer, and reading the instant
+            // in UTC keeps the logged date the same whatever the device's timezone.
+            // No PII: names, personal code and document number stay out per project
+            // convention, and an expiry date is not identifying on its own.
+            LoggingUtil.Companion.debugLog(TAG, "LV personal data parsed, certExpiry="
+                + x509.getNotAfter().toInstant().atZone(ZoneOffset.UTC).toLocalDate(), null);
 
-            return PersonalData.create(surname, givenName, "", issuingCountry, dateOfBirth,
-                personalCode, serialNumber, null, certExpiryDate, CardType.LATVIA_IDEMIA);
+            return PersonalData.create(surname, givenName, null, dateOfBirth,
+                personalCode, serialNumber, null, CardType.LATVIA_IDEMIA);
         } catch (SmartCardReaderException e) {
             // NFC / SM / card-status errors from certificate(): propagate with
             // their original message and stack so the cause is visible upstream.
