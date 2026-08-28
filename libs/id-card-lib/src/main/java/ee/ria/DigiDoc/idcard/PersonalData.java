@@ -37,7 +37,7 @@ import java.time.LocalDate;
  * <p>One exception, called out where it happens: Latvian cards fill
  * {@code surname}, {@code givenNames} and {@code documentNumber} from their
  * authentication certificate, because those are fields other models do state and the
- * LV card states them nowhere else. See {@code LatviaIdemiaWithPace.personalData()}.
+ * LV card states them nowhere else. See {@code LatvianPersonalDataParser}.
  */
 @AutoValue
 public abstract class PersonalData {

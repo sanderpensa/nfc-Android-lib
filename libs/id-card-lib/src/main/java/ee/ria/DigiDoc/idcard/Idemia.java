@@ -87,6 +87,9 @@ abstract class Idemia implements Token {
      */
     private static final int PKCS15_TAG_TYPE_ATTRIBUTES = 0xA1;
 
+    /** Where the retry counter sits in the GET DATA response for a PIN. */
+    private static final int RETRY_COUNTER_OFFSET = 13;
+
     private static final Map<CertificateType, byte[]> CERT_MAP = new HashMap<>();
     static {
         CERT_MAP.put(CertificateType.AUTHENTICATION, new byte[] {(byte) 0xAD, (byte) 0xF1, 0x34, 0x01});
@@ -197,7 +200,7 @@ abstract class Idemia implements Token {
             byte[] record = reader.transmit(0x00, 0xB0, 0x00, 0x00, null, 0x00);
             data.put(i, new String(record, StandardCharsets.UTF_8).trim());
         }
-        return IdemiaPersonalDataParser.parse(data);
+        return PersonalDataParser.parse(data, CardType.ID1);
     }
 
     /**
@@ -1489,7 +1492,15 @@ abstract class Idemia implements Token {
         } else {
             selectMainAid();
         }
-        return reader.transmit(0x00, 0xCB, 0x3F, 0xFF, new byte[] {0x4D, 0x08, 0x70, 0x06, (byte) 0xBF, (byte) 0x81, Objects.requireNonNull(PIN_MAP.get(type)), 0x02, (byte) 0xA0, (byte) 0x80}, 0x00)[13];
+        byte[] response = reader.transmit(0x00, 0xCB, 0x3F, 0xFF, new byte[] {0x4D, 0x08, 0x70, 0x06, (byte) 0xBF, (byte) 0x81, Objects.requireNonNull(PIN_MAP.get(type)), 0x02, (byte) 0xA0, (byte) 0x80}, 0x00);
+        // The counter is the fourteenth byte of the PIN's A0 template. A shorter
+        // answer is reported rather than indexed into.
+        if (response.length <= RETRY_COUNTER_OFFSET) {
+            throw new SmartCardReaderException(String.format(
+                    "%s retry counter: expected at least %d bytes, card answered %d",
+                    type, RETRY_COUNTER_OFFSET + 1, response.length));
+        }
+        return response[RETRY_COUNTER_OFFSET];
     }
 
     @Override

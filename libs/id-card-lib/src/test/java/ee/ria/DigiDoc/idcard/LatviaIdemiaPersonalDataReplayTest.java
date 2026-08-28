@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  *       at 0x00E7 offsets, terminated by 6B00 EOF.</li>
  *   <li>X.509 cert parse + RDN extraction (surname, given name, serialNumber)
  *       using BouncyCastle.</li>
- *   <li>LV personal-code → date-of-birth mapping in {@code LatviaPersonalDataParser}.</li>
+ *   <li>LV personal-code → date-of-birth mapping in {@code LatvianPersonalCode}.</li>
  *   <li>That the fields this card does not state come back null — citizenship and
  *       document expiry — rather than as blanks or a neighbouring value.</li>
  * </ul>

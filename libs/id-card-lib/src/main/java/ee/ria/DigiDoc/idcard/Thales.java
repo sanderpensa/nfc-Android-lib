@@ -71,7 +71,7 @@ class Thales implements Token {
             byte[] record = readFile(0x02, new byte[] {0x50, (byte) i});
             data.put(i, new String(record, StandardCharsets.UTF_8).trim());
         }
-        return ThalesPersonalDataParser.parse(data);
+        return PersonalDataParser.parse(data, CardType.THALES);
     }
 
     @Override

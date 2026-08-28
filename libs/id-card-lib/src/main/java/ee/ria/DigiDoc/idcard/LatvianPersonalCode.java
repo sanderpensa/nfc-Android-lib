@@ -24,8 +24,8 @@ import java.util.regex.Pattern;
 
 import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil;
 
-class LatviaPersonalDataParser {
-    private static final String TAG = LatviaPersonalDataParser.class.getName();
+class LatvianPersonalCode {
+    private static final String TAG = LatvianPersonalCode.class.getName();
 
     /**
      * Updated (new) Latvian personal code: first digit "3", second digit "2"-"9",
@@ -36,7 +36,7 @@ class LatviaPersonalDataParser {
     private static final Pattern UPDATED_FORMAT_PATTERN =
             Pattern.compile("^3[2-9]\\d{4}-?\\d{5}$");
 
-    private LatviaPersonalDataParser() {}
+    private LatvianPersonalCode() {}
 
     /**
      * Parse date of birth from a Latvian personal code.
@@ -59,9 +59,12 @@ class LatviaPersonalDataParser {
             }
             return parseDateOfBirthFromOldCode(codeDigits);
         } catch (Exception e) {
-            // Personal code is PII — never log the value itself, only that
-            // parsing failed. The exception trace is enough for triage.
-            LoggingUtil.Companion.errorLog(TAG, "Could not parse DOB from personal code", e);
+            // Personal code is PII — never log the value itself, only that parsing
+            // failed. Not the throwable: these messages quote the text they failed
+            // on, which is the code. Its class is enough for triage.
+            LoggingUtil.Companion.errorLog(TAG, String.format(
+                    "Could not parse DOB from personal code (%s)",
+                    e.getClass().getSimpleName()), null);
             return null;
         }
     }

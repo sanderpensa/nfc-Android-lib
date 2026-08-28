@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  *       drives {@link Idemia#personalData} through its 1 + 1 + 8*2 = 18
  *       APDU sequence (SELECT MAIN AID + SELECT DF 0x5000 + then for each
  *       of EF 0x5001..0x5008: SELECT EF + READ BINARY). Each EF returns
- *       one UTF-8 field; {@link IdemiaPersonalDataParser} reassembles
+ *       one UTF-8 field; {@link PersonalDataParser} reassembles
  *       them into a {@link PersonalData} object.</li>
  *
  *   <li>{@link #certificate_replaysEeAuthCertReadAndReturns1032ByteCert}
@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
  *       of it in the cert subject).</li>
  *   <li>EE cert is 1032 bytes (LV's is 1182), ending on a 116-byte partial
  *       chunk vs LV's 37-byte partial chunk.</li>
- *   <li>{@code IdemiaPersonalDataParser} maps EF position → field.</li>
+ *   <li>{@code PersonalDataParser} maps EF position → field.</li>
  * </ul>
  *
  * <p>Fixture is a test card; "JÕEORG, JAAK-KRISTJAN, 38001085718" is

@@ -19,23 +19,8 @@
 
 package ee.ria.DigiDoc.idcard;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.x500.RDN;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x500.style.BCStyle;
-import org.bouncycastle.asn1.x500.style.IETFUtils;
-
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
-
 import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 import ee.ria.DigiDoc.smartcardreader.nfc.NfcSmartCardReader;
-import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil;
 
 /**
  * Latvian eID card NFC token.
@@ -49,7 +34,6 @@ import ee.ria.DigiDoc.utilsLib.logging.LoggingUtil;
  * since the Latvian card uses different key slot assignments.
  */
 class LatviaIdemiaWithPace extends IdemiaWithPace {
-    private static final String TAG = LatviaIdemiaWithPace.class.getName();
 
     LatviaIdemiaWithPace(NfcSmartCardReader reader) {
         super(reader);
@@ -127,92 +111,23 @@ class LatviaIdemiaWithPace extends IdemiaWithPace {
     // literals, both places where a wrong value fails a test rather than a tap.
 
     /**
-     * Read personal data from the auth certificate subject and EF 0x5001 (personal code).
-     * Latvian eID cards store only the personal code in EF files (DF 0x5000 / EF 0x5001).
-     * Name and document number are extracted from the auth certificate subject:
-     *   - OID 2.5.4.4  (surname)
-     *   - OID 2.5.4.42 (givenName)
-     *   - OID 2.5.4.5  (serialNumber) — format "PNOLV-{personalCode}"
+     * Reads the two things the card holds, and hands both to
+     * {@link LatvianPersonalDataParser}, which states the contract.
      *
-     * <p>Surname, given name and document number are certificate derivations standing
-     * in for fields other card models read from a file — the only reason a
-     * certificate is parsed here at all; see {@link PersonalData}. Anything the
-     * certificate says that no card states belongs to the caller, which has the
-     * certificate.
-     *
-     * <p>Citizenship and document expiry are null: these cards state neither over
-     * NFC.
+     * <p>EF 0x5001 under DF 0x5000, then the authentication certificate. Note the
+     * file numbering does not carry across models: EF 0x5001 is the personal code
+     * here and the surname on a card that states all eight records — see
+     * {@link PersonalDataParser}.
      */
     @Override
     public PersonalData personalData() throws SmartCardReaderException {
-        // Read personal code from EF 0x5001
+        // Personal code from EF 0x5001; everything else is in the certificate.
         selectMainAid();
         reader.transmit(0x00, 0xA4, 0x01, 0x0C, new byte[]{0x50, 0x00}, null);
         reader.transmit(0x00, 0xA4, 0x02, 0x0C, new byte[]{0x50, 0x01}, null);
         byte[] record = reader.transmit(0x00, 0xB0, 0x00, 0x00, null, 0x00);
-        // Strip trailing 0xFF (CardOS unused-space marker on fixed-size EFs)
-        // before UTF-8 decoding — String.trim() only strips ASCII whitespace.
-        int len = record.length;
-        while (len > 0 && record[len - 1] == (byte) 0xFF) {
-            len--;
-        }
-        String personalCode = new String(record, 0, len, StandardCharsets.UTF_8).trim();
 
-        // Parse auth certificate for remaining fields
-        try {
-            byte[] certBytes = certificate(CertificateType.AUTHENTICATION);
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            X509Certificate x509 = (X509Certificate)
-                cf.generateCertificate(new ByteArrayInputStream(certBytes));
-
-            X500Name subject = X500Name.getInstance(
-                x509.getSubjectX500Principal().getEncoded());
-
-            String surname = rdnString(subject, BCStyle.SURNAME);
-            String givenName = rdnString(subject, BCStyle.GIVENNAME);
-            String serialNumber = rdnString(subject, BCStyle.SERIALNUMBER);
-
-            LocalDate dateOfBirth = LatviaPersonalDataParser.parseDateOfBirth(personalCode);
-
-            // Logged, not returned: a certificate fact belongs to whoever holds the
-            // certificate. It earns a log line because "is the card expired" is the
-            // first question a support report has to answer, and reading the instant
-            // in UTC keeps the logged date the same whatever the device's timezone.
-            // No PII: names, personal code and document number stay out per project
-            // convention, and an expiry date is not identifying on its own.
-            LoggingUtil.Companion.debugLog(TAG, "LV personal data parsed, certExpiry="
-                + x509.getNotAfter().toInstant().atZone(ZoneOffset.UTC).toLocalDate(), null);
-
-            return PersonalData.create(surname, givenName, null, dateOfBirth,
-                personalCode, serialNumber, null, CardType.LATVIA_IDEMIA);
-        } catch (SmartCardReaderException e) {
-            // NFC / SM / card-status errors from certificate(): propagate with
-            // their original message and stack so the cause is visible upstream.
-            throw e;
-        } catch (CertificateException e) {
-            // Specific message when DER parsing actually fails — distinct from
-            // every-other-failure case below.
-            throw new SmartCardReaderException("Failed to parse auth certificate", e);
-        } catch (Exception e) {
-            // Catch-all for anything else (BC IllegalArgumentException, NPE, etc.)
-            // so nothing escapes uncaught onto the NFC binder thread. The throwable
-            // class name in the message keeps logs readable.
-            throw new SmartCardReaderException(
-                "Unexpected error reading personal data: " + e.getClass().getSimpleName(), e);
-        }
+        return LatvianPersonalDataParser.parse(
+                record, certificate(CertificateType.AUTHENTICATION));
     }
-
-    /**
-     * Extract a single RDN value from an X.500 subject by OID, returning "" when absent.
-     * Delegates to BouncyCastle so UTF-8 strings, multi-valued RDNs, escaped commas, and
-     * tag/length variations of DirectoryString are handled correctly.
-     */
-    private static String rdnString(X500Name name, ASN1ObjectIdentifier oid) {
-        RDN[] rdns = name.getRDNs(oid);
-        if (rdns == null || rdns.length == 0) {
-            return "";
-        }
-        return IETFUtils.valueToString(rdns[0].getFirst().getValue());
-    }
-
 }

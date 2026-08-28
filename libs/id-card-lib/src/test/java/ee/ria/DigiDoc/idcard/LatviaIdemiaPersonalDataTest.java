@@ -33,9 +33,9 @@ import java.util.Date;
 /**
  * End-to-end test of {@link LatviaIdemiaWithPace#personalData()} against
  * a synthetic auth certificate and a mocked card. Confirms the surname /
- * given-name / personal-code / document-number / issuing-country
- * extraction from the cert subject, and that the date-of-birth is derived
- * from the personal code rather than read off the card.
+ * given-name / personal-code / document-number extraction from the cert
+ * subject, and that the date-of-birth is derived from the personal code
+ * rather than read off the card.
  *
  * <p>Builds the cert fresh in each test via BouncyCastle so there is no
  * fixture file to keep in sync. Any change to the cert subject parsing

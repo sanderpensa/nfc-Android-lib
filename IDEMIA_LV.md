@@ -1460,7 +1460,8 @@ on one Latvian card and produce unverifiable signatures on another.
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/Idemia.java`                   | AIDs, cert paths, PIN refs and padding, retry counter, change/unblock |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/IdemiaWithPace.java`           | PACE handshake, secure messaging, MSE:SET, the measured EE constants  |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatviaIdemiaWithPace.java`     | LV personal-data flow; refuses measured constants (§13)               |
-| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatviaPersonalDataParser.java` | Personal-code → DOB                                                   |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatvianPersonalCode.java`      | Personal-code → DOB                                                  |
+| `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/LatvianPersonalDataParser.java` | Personal code EF + auth certificate → `PersonalData`                |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/Pkcs15SecurityEnvironment.java` | The PKCS#15 parser §13 and §13.1 describe: EF.TokenInfo rows, key entries, EF.OD/CDF file ids |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SecurityEnvironment.java`      | One resolved `MSE:SET` — algorithm reference and key reference as a pair |
 | `libs/id-card-lib/src/main/java/ee/ria/DigiDoc/idcard/SigningOperation.java`         | Applet, operation bit and `MSE:SET` P2 per operation (§9-§11)          |
