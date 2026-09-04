@@ -237,11 +237,18 @@ class IdemiaWithPace extends Idemia implements TokenWithPace, ApduEncryptor {
             byte[] cardAccess = readBinaryFile();
             paramId = parsePaceParameterId(cardAccess);
         } catch (SmartCardReaderException e) {
-            // EF.CardAccess select/read failed — could be a card variant where
-            // the file isn't visible under the MAIN AID context, ACL-restricted,
-            // or otherwise unreadable. Fall through to the legacy default rather
-            // than failing PACE outright; every card that worked before this
-            // file existed worked with the hardcoded 0x0C / secp256r1 anyway.
+            // A lost tag or a dead link is not a card without EF.CardAccess: the
+            // session is over, and the MSE:SET that would follow can only wait out
+            // the reader's timeout before failing the same way. Report it now, from
+            // the command that failed.
+            if (e.getCause() instanceof IOException) {
+                throw e;
+            }
+            // The card answered and declined — a variant where the file isn't
+            // visible under the MAIN AID context, ACL-restricted, or otherwise
+            // unreadable. Fall through to the legacy default rather than failing
+            // PACE outright; every card that worked before this file existed worked
+            // with the hardcoded 0x0C / secp256r1 anyway.
             LoggingUtil.Companion.debugLog(TAG,
                 "EF.CardAccess read failed, using legacy PACE defaults: " + e.getMessage(),
                 null);

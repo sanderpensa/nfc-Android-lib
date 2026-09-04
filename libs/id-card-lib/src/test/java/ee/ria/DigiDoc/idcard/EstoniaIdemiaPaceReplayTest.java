@@ -3,9 +3,16 @@ package ee.ria.DigiDoc.idcard;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.bytes;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err6B00;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.tagLost;
+import static com.google.common.truth.Truth.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 
 /**
  * Byte-for-byte replay of a real EE IDEMIA (ESTEID2018) test card's
@@ -33,6 +40,34 @@ public final class EstoniaIdemiaPaceReplayTest {
     @Test
     public void tunnel_replaysCapturedEePaceSession_chipMacVerifies() throws Exception {
         ReplayFixture.ee().tunnel().assertAllConsumed();
+    }
+
+    /**
+     * A tag lost while reading EF.CardAccess ends the tunnel there. It must not be
+     * taken for a card without the file: falling back to the legacy parameters and
+     * sending MSE:SET to a tag that is already gone leaves the caller waiting out the
+     * reader's 50-second transceive timeout for an error that was known 50 seconds
+     * earlier — three taps in {@code research/logs/log.txt} took 54 s to fail this way.
+     *
+     * <p>The transcript ends at the READ BINARY past EOF, so an MSE:SET would arrive
+     * as an unexpected APDU and fail the test.
+     */
+    @Test
+    public void tunnel_tagLostReadingCardAccess_failsThereRatherThanAttemptingPace()
+            throws Exception {
+        ApduReplayReader r = new ApduReplayReader();
+        r.expect("00a4040c10a000000077010800070000fe00000100", ok());
+        r.expect("00a4020c02011c", ok());
+        r.expect("00b0000000",
+                bytes("31143012060a04007f0007020204020402010202010c000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
+        r.expect("00b0004000", tagLost());
+
+        IdemiaWithPace token = new IdemiaWithPace(r.build());
+        SmartCardReaderException thrown = assertThrows(SmartCardReaderException.class,
+                () -> token.tunnel(CAN));
+
+        assertThat(thrown).hasCauseThat().isInstanceOf(IOException.class);
+        assertThat(r.unconsumed()).isEmpty();
     }
 
     /**
