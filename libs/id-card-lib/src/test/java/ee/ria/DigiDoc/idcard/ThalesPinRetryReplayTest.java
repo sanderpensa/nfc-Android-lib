@@ -1,6 +1,7 @@
 package ee.ria.DigiDoc.idcard;
 
 import static com.google.common.truth.Truth.assertThat;
+import static ee.ria.DigiDoc.idcard.ApduReplayReader.bytes;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.err;
 import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -59,6 +60,65 @@ public final class ThalesPinRetryReplayTest {
 
         fixture.token.unblockAndChangeCode(TestPins.PUK, CodeType.PIN1, TestPins.NEW_PIN1);
 
+        fixture.assertAllConsumed();
+    }
+
+    // GET DATA answers, A0 { 83 01 <ref>, DF21 04 <retries> ff a5 03, DF2F 01 <changed> }
+    // — the captured shape, with the two values under test chosen.
+    private static String pinStatus(int ref, int retries, int changed) {
+        return String.format("a00e8301%02xdf2104%02xffa503df2f01%02x", ref, retries, changed);
+    }
+
+    /**
+     * Retry counter and changed flag share one GET DATA, so asking for both costs one
+     * read. The transcript holds a single PIN2 GET DATA; a second would arrive as an
+     * unexpected APDU.
+     */
+    @Test
+    public void pinChangedFlagAndRetryCounter_shareOneGetData() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "82" + "00",
+                        bytes(pinStatus(0x82, 3, 0))))
+                .tunnel();
+
+        assertThat(fixture.token.pinChangedFlag(CodeType.PIN2)).isEqualTo(0);
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN2)).isEqualTo(3);
+        fixture.assertAllConsumed();
+    }
+
+    /** Each code has its own answer; PIN1's is not PIN2's. */
+    @Test
+    public void retryCounter_isCachedPerCode() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> {
+                    r.expect("00cb00ff" + "05" + "a0038301" + "81" + "00", bytes(pinStatus(0x81, 3, 1)));
+                    r.expect("00cb00ff" + "05" + "a0038301" + "82" + "00", bytes(pinStatus(0x82, 1, 1)));
+                })
+                .tunnel();
+
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN1)).isEqualTo(3);
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN2)).isEqualTo(1);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * A VERIFY changes the counter whether it succeeds or not, so the answer is
+     * forgotten before it is sent and the next question goes back to the card.
+     */
+    @Test
+    public void retryCounter_isReadAgainAfterAVerify() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> {
+                    r.expect("00cb00ff" + "05" + "a0038301" + "81" + "00", bytes(pinStatus(0x81, 3, 1)));
+                    r.expect("00200081" + "0c" + TestPins.WRONG_PIN1_PADDED_00, err(0x63, 0xC2));
+                    r.expect("00cb00ff" + "05" + "a0038301" + "81" + "00", bytes(pinStatus(0x81, 2, 1)));
+                })
+                .tunnel();
+
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN1)).isEqualTo(3);
+        assertThrows(CodeVerificationException.class,
+                () -> fixture.token.authenticate(TestPins.WRONG_PIN1, new byte[48]));
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN1)).isEqualTo(2);
         fixture.assertAllConsumed();
     }
 }

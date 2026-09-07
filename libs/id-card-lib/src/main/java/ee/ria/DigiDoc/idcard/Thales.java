@@ -27,6 +27,7 @@ import android.util.SparseArray;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,17 @@ class Thales implements Token {
     }
 
     protected final SmartCardReader reader;
+
+    /**
+     * The last GET DATA answer per code, for the life of this token.
+     *
+     * <p>Retry counter and changed flag live in one response, and {@link
+     * #pinChangedFlag} and {@link #codeRetryCounter} each want one tag of it — so
+     * asking for both, as a diagnostic does, is one read rather than two. Cleared
+     * before any APDU that can change either value; a token lives one tap, so
+     * nothing else can.
+     */
+    private final Map<CodeType, byte[]> pinStatus = new EnumMap<>(CodeType.class);
 
     Thales(SmartCardReader reader) {
         this.reader = reader;
@@ -153,7 +165,25 @@ class Thales implements Token {
     }
 
     private byte[] getData(CodeType type) throws SmartCardReaderException {
-        return reader.transmit(0x00, 0xCB, 0x00, 0xFF, new byte[] {(byte) 0xA0, 0x03, (byte) 0x83, 0x01, Objects.requireNonNull(VERIFY_PIN_MAP.get(type))}, 0x00);
+        byte[] cached = pinStatus.get(type);
+        if (cached != null) {
+            return cached;
+        }
+        byte[] data = reader.transmit(0x00, 0xCB, 0x00, 0xFF, new byte[] {(byte) 0xA0, 0x03, (byte) 0x83, 0x01, Objects.requireNonNull(VERIFY_PIN_MAP.get(type))}, 0x00);
+        pinStatus.put(type, data);
+        return data;
+    }
+
+    /**
+     * Before any VERIFY, CHANGE or RESET RETRY COUNTER: whatever it does, the card's
+     * answer is stale.
+     *
+     * <p>Every code's answer, not the one named. RESET RETRY COUNTER through the PUK
+     * moves the PUK's counter and the target PIN's together, so there is no code whose
+     * answer one of these APDUs is guaranteed to have left alone.
+     */
+    private void forgetPinStatus() {
+        pinStatus.clear();
     }
 
     @Override
@@ -161,6 +191,7 @@ class Thales implements Token {
         if (type.equals(CodeType.PUK)) {
             throw new SmartCardReaderException("Cannot change PUK code");
         }
+        forgetPinStatus();
         try {
             reader.transmit(0x00, 0x24, 0x00, Objects.requireNonNull(VERIFY_PIN_MAP.get(type)), concat(code(currentCode), code(newCode)), null);
         } catch (ApduResponseException e) {
@@ -173,6 +204,7 @@ class Thales implements Token {
         if (type.equals(CodeType.PUK)) {
             throw new SmartCardReaderException("Cannot unblock and change PUK code");
         }
+        forgetPinStatus();
         try {
             reader.transmit(0x00, 0x2C, pukCode == null ? 0x02 : 0x00, Objects.requireNonNull(VERIFY_PIN_MAP.get(type)), concat(code(pukCode), code(newCode)), null);
         } catch (ApduResponseException e) {
@@ -226,6 +258,7 @@ class Thales implements Token {
     }
 
     private void verifyCode(CodeType type, byte[] code) throws SmartCardReaderException {
+        forgetPinStatus();
         try {
             reader.transmit(0x00, 0x20, 0x00, Objects.requireNonNull(VERIFY_PIN_MAP.get(type)), code(code), null);
         } catch (ApduResponseException e) {
