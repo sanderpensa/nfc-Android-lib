@@ -162,15 +162,36 @@ public final class ThalesPinRetryReplayTest {
         fixture.assertAllConsumed();
     }
 
-    /** The changed flag keeps its conservative default: absent reads as not changed. */
+    /**
+     * DF2F = 00 is the card saying PIN2 is still the one it was issued with, and a
+     * Thales card refuses to sign until it is changed. Both gates on this flag rest on
+     * that fact, so it is pinned here.
+     */
     @Test
-    public void pinChangedFlag_answerWithoutDf2f_readsAsNotChanged() throws Exception {
+    public void pinChangedFlag_zero_meansPin2StillTheIssuedOne() throws Exception {
         var fixture = ReplayFixture.thales()
                 .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "82" + "00",
-                        bytes("a007830182df21040300")))
+                        bytes(pinStatus(0x82, 3, 0))))
                 .tunnel();
 
         assertThat(fixture.token.pinChangedFlag(CodeType.PIN2)).isEqualTo(0);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * An answer without DF2F is not that statement, so it reads as changed and the
+     * card — which enforces the rule itself — decides. The iOS library defaults the
+     * same way; the two must not disagree on which cards may sign.
+     */
+    @Test
+    public void pinChangedFlag_answerWithoutDf2f_readsAsChangedAndLeavesItToTheCard()
+            throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "82" + "00",
+                        bytes("a00a830182df210403ffa503")))
+                .tunnel();
+
+        assertThat(fixture.token.pinChangedFlag(CodeType.PIN2)).isEqualTo(1);
         fixture.assertAllConsumed();
     }
 }

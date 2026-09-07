@@ -156,10 +156,12 @@ class Thales implements Token {
     @Override
     public int pinChangedFlag(CodeType type) throws SmartCardReaderException {
         Integer flag = tagValue(getData(type), 0xDF2F);
-        // An absent flag reads as "not changed": this gates signing, and the
-        // conservative answer is the one that refuses. Unlike the counter below,
-        // where 0 would assert a blocked PIN the card never claimed.
-        return flag == null ? 0 : flag;
+        // DF2F = 00 is the card stating PIN2 is still the issued one, and a Thales
+        // card refuses to sign until it has been changed — that is what the gates on
+        // this value enforce. An absent tag is no such statement, so it reads as
+        // changed and the card, which enforces the rule itself, gives the answer.
+        // The same default as the iOS library.
+        return flag == null ? 1 : flag;
     }
 
     @Override
