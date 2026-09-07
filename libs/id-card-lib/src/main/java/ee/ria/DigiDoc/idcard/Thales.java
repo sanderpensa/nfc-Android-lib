@@ -139,7 +139,8 @@ class Thales implements Token {
         return stream.toByteArray();
     }
 
-    private static int extractTagValue(byte[] data, int tag) {
+    /** The first byte of {@code tag} inside the A0 template, or null where the card sent no such tag. */
+    private static Integer tagValue(byte[] data, int tag) {
         TLV info = TLV.from(data);
         if (info != null && (info.getTag() & 0xFF) == 0xA0) {
             List<TLV> records = parseTLVRecursive(data);
@@ -149,19 +150,28 @@ class Thales implements Token {
                 }
             }
         }
-        return 0;
+        return null;
     }
 
     @Override
     public int pinChangedFlag(CodeType type) throws SmartCardReaderException {
-        byte[] data = getData(type);
-        return extractTagValue(data, 0xDF2F);
+        Integer flag = tagValue(getData(type), 0xDF2F);
+        // An absent flag reads as "not changed": this gates signing, and the
+        // conservative answer is the one that refuses. Unlike the counter below,
+        // where 0 would assert a blocked PIN the card never claimed.
+        return flag == null ? 0 : flag;
     }
 
     @Override
     public int codeRetryCounter(CodeType type) throws SmartCardReaderException {
-        byte[] data = getData(type);
-        return extractTagValue(data, 0xDF21);
+        Integer retries = tagValue(getData(type), 0xDF21);
+        if (retries == null) {
+            // A blocked PIN answers DF21 = 00 (measured, CARD_VARIANTS.md §8.5), so a
+            // missing tag is not "blocked" — it is an answer this code cannot read.
+            throw new SmartCardReaderException(
+                    type + " retry counter: card answered without DF21");
+        }
+        return retries;
     }
 
     private byte[] getData(CodeType type) throws SmartCardReaderException {

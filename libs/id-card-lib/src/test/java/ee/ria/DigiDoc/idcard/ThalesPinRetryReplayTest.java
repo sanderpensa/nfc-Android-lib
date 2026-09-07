@@ -7,6 +7,9 @@ import static ee.ria.DigiDoc.idcard.ApduReplayReader.ok;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
+
+import ee.ria.DigiDoc.smartcardreader.ApduResponseException;
+import ee.ria.DigiDoc.smartcardreader.SmartCardReaderException;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -119,6 +122,55 @@ public final class ThalesPinRetryReplayTest {
         assertThrows(CodeVerificationException.class,
                 () -> fixture.token.authenticate(TestPins.WRONG_PIN1, new byte[48]));
         assertThat(fixture.token.codeRetryCounter(CodeType.PIN1)).isEqualTo(2);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * The captured answer of a blocked PIN: DF21 is present and reads 00
+     * ({@code research/logs/thales-ee/pin1-block-and-unblock.log}). A real block is
+     * still reported as 0.
+     */
+    @Test
+    public void retryCounter_blockedPinAnswersZeroWithTheTagPresent() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "81" + "00",
+                        bytes("a0348301818c04f0000000df210400ffa503df2702ffffdf28010cdf2f0101"
+                                + "df3f1403040c01aa01ffff550055ffffaaff55aa000000")))
+                .tunnel();
+
+        assertThat(fixture.token.codeRetryCounter(CodeType.PIN1)).isEqualTo(0);
+        fixture.assertAllConsumed();
+    }
+
+    /**
+     * An answer with no DF21 at all is not a blocked PIN — no card has been seen to
+     * signal a block that way — so it is reported as unreadable rather than as 0.
+     * SmartCardReaderException, not ApduResponseException: the card said 90 00.
+     */
+    @Test
+    public void retryCounter_answerWithoutDf21_isReportedNotReadAsBlocked() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "81" + "00",
+                        bytes("a007830181df2f0101")))
+                .tunnel();
+
+        SmartCardReaderException thrown = assertThrows(SmartCardReaderException.class,
+                () -> fixture.token.codeRetryCounter(CodeType.PIN1));
+
+        assertThat(thrown).isNotInstanceOf(ApduResponseException.class);
+        assertThat(thrown).hasMessageThat().contains("DF21");
+        fixture.assertAllConsumed();
+    }
+
+    /** The changed flag keeps its conservative default: absent reads as not changed. */
+    @Test
+    public void pinChangedFlag_answerWithoutDf2f_readsAsNotChanged() throws Exception {
+        var fixture = ReplayFixture.thales()
+                .with(r -> r.expect("00cb00ff" + "05" + "a0038301" + "82" + "00",
+                        bytes("a007830182df21040300")))
+                .tunnel();
+
+        assertThat(fixture.token.pinChangedFlag(CodeType.PIN2)).isEqualTo(0);
         fixture.assertAllConsumed();
     }
 }
