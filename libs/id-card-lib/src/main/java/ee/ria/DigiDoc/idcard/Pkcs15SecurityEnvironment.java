@@ -413,13 +413,8 @@ final class Pkcs15SecurityEnvironment {
      * capping only one of the two walkers leaves the hazard reachable through
      * the other.
      *
-     * <p><b>This bounds this parser only.</b> {@code TLV.parseTLVRecursive}
-     * recurses without a bound and is deliberately left that way: it has been
-     * unchanged since 1.2.2, and EF.CardAccess goes through it during PACE on
-     * every card, Estonian included. Bounding it would edit the parse every tap
-     * depends on, to close a hole no card has ever presented. These two walkers
-     * were bounded because this file was already being changed — not because the
-     * exposure stops here.
+     * <p>{@code TLV.parseTLVRecursive} carries its own bound ({@code TLV.MAX_DEPTH})
+     * for the same hazard on the path EF.CardAccess takes during PACE.
      */
     private static final int MAX_DEPTH = 32;
 
